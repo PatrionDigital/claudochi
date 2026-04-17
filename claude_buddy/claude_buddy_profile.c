@@ -207,11 +207,40 @@ static void claude_buddy_profile_get_gap_config(GapConfig* cfg, FuriHalBleProfil
     memcpy(cfg->mac_address, furi_hal_version_get_ble_mac(), GAP_MAC_ADDR_SIZE);
     cfg->mac_address[2] += 2;
 
+    /* Legacy BLE advertising is a hard 31-byte budget:
+     *   Flags AD:              3 bytes (stack-injected)
+     *   128-bit NUS UUID AD:  18 bytes (1 len + 1 type + 16 data)
+     *   Name AD:              ≤ 10 bytes remaining
+     *     = 1 len + 1 type + ≤ 8 bytes of name data
+     *
+     * Two subtleties vs. what one might naively expect:
+     *
+     *   (1) aci_gap_set_discoverable expects the Name arg to start with
+     *       AD_TYPE_COMPLETE_LOCAL_NAME (0x09) — the stack does NOT
+     *       inject the type byte for us. See gap.c:360 (where it skips
+     *       adv_name[0] when registering the GAP Device Name char) and
+     *       hid_profile.c:424 (which copies 0x09 from the first byte of
+     *       furi_hal_version_get_ble_local_device_name_ptr()). Our prior
+     *       build wrote "Claude-..." with 'C' (0x43) at [0], which the
+     *       stack interpreted as an invalid AD type and rejected.
+     *
+     *   (2) Even with the type byte fixed, "Claude-Raderado" (15 chars)
+     *       overflows the 31-byte total budget by 7 bytes; the stack
+     *       logs "set_discoverable failed N" at gap.c:470 and silently
+     *       leaves the state as Advertising anyway, which is why the
+     *       Flipper UI showed "BT: Advertising" while nothing actually
+     *       went out on air.
+     *
+     * Name format: REFERENCE.md suggests "Claude" + "a few bytes of your
+     * BT MAC" for device distinguishability. With 8 chars of name data
+     * we have room for "Claude" (6) + 2 hex digits of the last MAC byte. */
+    const uint8_t* mac = furi_hal_version_get_ble_mac();
     snprintf(
         cfg->adv_name,
         FURI_HAL_VERSION_DEVICE_NAME_LENGTH,
-        "Claude-%s",
-        furi_hal_version_get_name_ptr());
+        "%c" "Claude%02X",
+        0x09, /* AD_TYPE_COMPLETE_LOCAL_NAME prefix byte */
+        mac[0]);
 }
 
 /* =========================================================================

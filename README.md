@@ -82,8 +82,10 @@ storage write_chunk /ext/apps/Bluetooth/claude_buddy.fap <size>
    fully quit (`cmd+Q`) and relaunch.
 3. **Developer → Open Hardware Buddy…** — if this item is missing, the
    feature is gated on your account; see *Troubleshooting* below.
-4. Click **Connect**. The picker lists `Claude-<flipper_name>` —
-   `Claude-Raderado` on the canonical device.
+4. Click **Connect**. The picker lists `Claude` followed by two hex
+   digits derived from the BT MAC's low byte (e.g. `Claude4F`). Eight
+   characters is the maximum that fits in a 31-byte legacy adv packet
+   alongside the 128-bit NUS UUID and flags.
 5. Select it. macOS will ask for Bluetooth permission on first use.
 6. The Flipper screen will show a **6-digit passkey** (rendered by the
    bt_service's built-in pin-code overlay). Type it into the desktop

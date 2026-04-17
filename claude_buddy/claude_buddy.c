@@ -22,6 +22,7 @@
 #include <gui/gui.h>
 #include <gui/view_port.h>
 #include <input/input.h>
+#include <notification/notification_messages.h>
 
 #define JSMN_STATIC
 #include "jsmn.h"
@@ -78,6 +79,9 @@ typedef struct {
     /* BT service + active profile */
     Bt* bt;
     FuriHalBleProfileBase* profile;
+
+    /* LED / haptic */
+    NotificationApp* notifications;
 } ClaudeBuddyApp;
 
 /* ============================================================
@@ -272,6 +276,15 @@ static void claude_buddy_on_bt_status(BtStatus status, void* ctx) {
     furi_mutex_acquire(app->mtx, FuriWaitForever);
     app->bt_status = status;
     furi_mutex_release(app->mtx);
+
+    /* Blue LED while a central is connected, off otherwise — mirrors
+     * hid_app/hid.c:100. Small quality-of-life indicator that matches
+     * stock Flipper UX conventions for BLE apps. */
+    if(app->notifications) {
+        notification_message(
+            app->notifications,
+            status == BtStatusConnected ? &sequence_set_blue_255 : &sequence_reset_blue);
+    }
 }
 
 static void claude_buddy_on_rx(const uint8_t* data, uint16_t len, void* ctx) {
@@ -300,6 +313,7 @@ int32_t claude_buddy_app(void* p) {
     app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));
     app->rx_stream = furi_stream_buffer_alloc(RX_STREAM_SIZE, RX_STREAM_TRIGGER);
     app->running = true;
+    app->notifications = furi_record_open(RECORD_NOTIFICATION);
 
     app->view_port = view_port_alloc();
     view_port_draw_callback_set(app->view_port, claude_buddy_draw, app);
@@ -388,6 +402,10 @@ int32_t claude_buddy_app(void* p) {
     }
     bt_set_status_changed_callback(app->bt, NULL, NULL);
     furi_record_close(RECORD_BT);
+
+    /* Make sure the LED is off when we leave. */
+    notification_message(app->notifications, &sequence_reset_blue);
+    furi_record_close(RECORD_NOTIFICATION);
 
     furi_timer_stop(app->redraw_timer);
     furi_timer_free(app->redraw_timer);

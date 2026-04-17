@@ -1,0 +1,119 @@
+# raderado
+
+Flipper Zero FAP that acts as a BLE peripheral for Anthropic's Claude desktop
+Hardware Buddy bridge. Built as a pure userland app (`FlipperAppType.EXTERNAL`)
+— no firmware fork required.
+
+Target firmware: [Unleashed](https://github.com/DarkFlippers/unleashed-firmware).
+Protocol spec: [anthropics/claude-desktop-buddy REFERENCE.md](https://github.com/anthropics/claude-desktop-buddy/blob/main/REFERENCE.md).
+
+**Status:** Phase 1 skeleton. Profile template, GAP advertising config, and
+NUS UUIDs are in place. GATT service/characteristic wiring and JSON handling
+are the next milestone.
+
+## Requirements
+
+- Flipper Zero running **Unleashed firmware** (any recent `unlshd-*` release).
+  Install via [qFlipper](https://flipperzero.one/update) or the
+  [Unleashed web updater](https://unleashedflip.com/).
+- macOS / Linux / Windows with Python 3.10+ and `pipx` (recommended) or
+  `pip --user`.
+- USB-C cable connecting the Flipper to your computer for dev flashing.
+
+## One-time setup
+
+```sh
+# 1. Install ufbt (Flipper's SDK-based build tool)
+pipx install ufbt
+
+# 2. Pin the SDK to the Unleashed release channel
+#    (stock update.flipperzero.one does NOT export the symbols this app needs)
+ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release
+
+# 3. Clone this repo
+git clone https://github.com/PatrionDigital/raderado.git
+cd raderado
+```
+
+## Build and install
+
+### Dev loop — build, push, launch in one step
+
+Plug the Flipper in over USB, close qFlipper if it's open (it holds the serial
+port), then:
+
+```sh
+cd claude_buddy
+ufbt launch
+```
+
+`ufbt launch` compiles `claude_buddy.fap`, uploads it to the Flipper's SD
+card under a temporary path, and launches it immediately. This is the fastest
+iteration path — the app is not retained across reboots.
+
+### Persistent install
+
+The build artifact lives at `claude_buddy/dist/claude_buddy.fap`. To install
+it permanently so it shows up in the Flipper's Apps menu:
+
+1. Plug the Flipper in and open **qFlipper**.
+2. Open the File Manager tab.
+3. Navigate to `SD Card/apps/Bluetooth/` (matches the `fap_category="Bluetooth"`
+   declared in [application.fam](claude_buddy/application.fam)).
+4. Drag `claude_buddy/dist/claude_buddy.fap` into that folder.
+
+On the Flipper: **Apps → Bluetooth → Claude Buddy** to launch.
+
+### Alternative: via CLI
+
+```sh
+cd claude_buddy
+ufbt                            # build only
+ufbt cli                        # opens Flipper CLI over USB
+# then at the Flipper prompt:
+storage write_chunk /ext/apps/Bluetooth/claude_buddy.fap <size>
+# (or use 'storage mkdir' and 'storage write' as appropriate — qFlipper is simpler)
+```
+
+## Pairing with the Claude desktop app
+
+1. On your Mac/Windows: open Claude Code Desktop (or Claude Cowork).
+2. Settings → **Enable Developer Mode**.
+3. Developer → **Open Hardware Buddy**.
+4. Click **Connect**. The picker should list `Claude-<flipper_name>` —
+   `Claude-Raderado` in the canonical case.
+5. Select it. For Phase 1 the link is unencrypted (no pairing PIN). If the
+   desktop refuses a non-bonded peripheral, rebuild with
+   `cdefines=["CLAUDE_BUDDY_ENCRYPTED"]` in [application.fam](claude_buddy/application.fam)
+   to enable bonding + MITM pairing (see the `#ifdef` branch in
+   [claude_buddy_profile.c:138](claude_buddy/claude_buddy_profile.c#L138)).
+
+## Project layout
+
+```
+raderado/
+├── claude_buddy/                     # the FAP
+│   ├── application.fam               # FAP manifest
+│   ├── claude_buddy.c                # main entry point
+│   ├── claude_buddy_profile.{c,h}    # BLE profile template, NUS UUIDs, GAP config
+│   └── dist/claude_buddy.fap         # build output (gitignored)
+├── reference/                        # shallow clone of Unleashed firmware (gitignored, read-only)
+└── README.md
+```
+
+## Troubleshooting
+
+- **`ufbt launch` hangs or fails to upload.** qFlipper or a `cli` session may
+  be holding the port. Close them. On macOS, `lsof /dev/cu.usbmodemflip_*` shows
+  who's attached.
+- **Build errors about undefined BLE symbols.** The SDK channel is wrong —
+  re-run `ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release`.
+- **App builds but the desktop picker doesn't see "Claude-Raderado".** Three
+  possibilities: (a) the Flipper's BT service is off — enable it in Settings →
+  Bluetooth; (b) the mobile app still has the Serial profile bonded — forget
+  the pairing on your phone; (c) the adv data filter on the desktop side
+  requires an encrypted link — see the `CLAUDE_BUDDY_ENCRYPTED` note above.
+
+## License
+
+TBD.

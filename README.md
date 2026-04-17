@@ -77,16 +77,24 @@ storage write_chunk /ext/apps/Bluetooth/claude_buddy.fap <size>
 
 ## Pairing with the Claude desktop app
 
-1. On your Mac/Windows: open Claude Code Desktop (or Claude Cowork).
-2. Settings → **Enable Developer Mode**.
-3. Developer → **Open Hardware Buddy**.
-4. Click **Connect**. The picker should list `Claude-<flipper_name>` —
-   `Claude-Raderado` in the canonical case.
-5. Select it. For Phase 1 the link is unencrypted (no pairing PIN). If the
-   desktop refuses a non-bonded peripheral, rebuild with
-   `cdefines=["CLAUDE_BUDDY_ENCRYPTED"]` in [application.fam](claude_buddy/application.fam)
-   to enable bonding + MITM pairing (see the `#ifdef` branch in
-   [claude_buddy_profile.c:138](claude_buddy/claude_buddy_profile.c#L138)).
+1. On your Mac/Windows: open the Claude desktop app.
+2. **Help → Troubleshooting → Enable Developer Mode** (macOS menu bar), then
+   fully quit (`cmd+Q`) and relaunch.
+3. **Developer → Open Hardware Buddy…** — if this item is missing, the
+   feature is gated on your account; see *Troubleshooting* below.
+4. Click **Connect**. The picker lists `Claude-<flipper_name>` —
+   `Claude-Raderado` on the canonical device.
+5. Select it. macOS will ask for Bluetooth permission on first use.
+6. The Flipper screen will show a **6-digit passkey** (rendered by the
+   bt_service's built-in pin-code overlay). Type it into the desktop
+   prompt. Bonding + encryption are established; the desktop then
+   subscribes to TX notifications and begins sending heartbeat JSON.
+
+The link is LE Secure Connections with MITM protection by default —
+`CLAUDE_BUDDY_ENCRYPTED` is set in [application.fam](claude_buddy/application.fam).
+Rebuild with that cdefine removed to regress to an unencrypted link
+for diagnostics (see the `#ifdef` branch in
+[claude_buddy_profile.c](claude_buddy/claude_buddy_profile.c)).
 
 ## Project layout
 
@@ -114,8 +122,15 @@ raderado/
 - **App builds but the desktop picker doesn't see "Claude-Raderado".** Three
   possibilities: (a) the Flipper's BT service is off — enable it in Settings →
   Bluetooth; (b) the mobile app still has the Serial profile bonded — forget
-  the pairing on your phone; (c) the adv data filter on the desktop side
-  requires an encrypted link — see the `CLAUDE_BUDDY_ENCRYPTED` note above.
+  the pairing on your phone; (c) Developer → Open Hardware Buddy… never found
+  it — account-level gate, see next entry.
+- **Developer menu exists but "Open Hardware Buddy…" is missing.** The feature
+  is gated by a server-side GrowthBook flag (ID `2358734848` as of April
+  2026). Editing local config won't enable it; the menu is built once from
+  the initial flag fetch. Ask Anthropic maker/hardware support to enable it
+  on your account. Runtime overrides in DevTools (`Op["2358734848"]={on:true}`
+  or `window.__growthbook.setForcedFeatures(...)`) don't re-trigger the menu
+  build.
 
 ## License
 

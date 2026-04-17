@@ -7,9 +7,13 @@ App(
     sources=["*.c"],
     fap_libs=["ble_profile"],
     fap_description="Anthropic Hardware Buddy bridge for Claude desktop",
-    fap_version="0.1",
+    fap_version="0.2",
     fap_category="Bluetooth",
-    # fap_icon="icon_10px.png",  # add in Phase 2
-    # To enable LE Secure Connections + bonding (Phase 2):
-    #   cdefines=["CLAUDE_BUDDY_ENCRYPTED"],
+    # Phase 2: LE Secure Connections + MITM-protected bonding. Matches the
+    # pairing flow the Claude desktop Hardware Buddy window expects
+    # (DisplayOnly peripheral → 6-digit passkey shown on Flipper, typed on
+    # desktop). Remove this line to rebuild Phase 1's unencrypted link for
+    # diagnostics — the profile code branches on CLAUDE_BUDDY_ENCRYPTED.
+    cdefines=["CLAUDE_BUDDY_ENCRYPTED"],
+    # fap_icon="icon_10px.png",  # add in Phase 3
 )

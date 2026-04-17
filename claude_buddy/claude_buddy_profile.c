@@ -49,6 +49,12 @@ typedef enum {
 #define CLAUDE_BUDDY_PERM_READ  (ATTR_PERMISSION_NONE)
 #endif
 
+/* Forward declaration so the chars[] array can reference the callback. */
+static bool claude_buddy_tx_data_cb(
+    const void* context,
+    const uint8_t** data,
+    uint16_t* data_len);
+
 static const BleGattCharacteristicParams claude_buddy_chars[ClaudeBuddyCharCount] = {
     [ClaudeBuddyCharRx] =
         {.name = "claude_rx",
@@ -62,8 +68,13 @@ static const BleGattCharacteristicParams claude_buddy_chars[ClaudeBuddyCharCount
          .is_variable = CHAR_VALUE_LEN_VARIABLE},
     [ClaudeBuddyCharTx] =
         {.name = "claude_tx",
-         .data_prop_type = FlipperGattCharacteristicDataFixed,
-         .data.fixed = {.ptr = NULL, .length = CLAUDE_BUDDY_MAX_PAYLOAD},
+         /* Callback-type data lets us support variable-length TX payloads
+          * through ble_gatt_characteristic_update — which doesn't take a
+          * length argument. The callback reads (data, len) from a
+          * per-profile outbox that claude_buddy_profile_tx populates
+          * before each update call. See claude_buddy_tx_data_cb below. */
+         .data_prop_type = FlipperGattCharacteristicDataCallback,
+         .data.callback = {.fn = claude_buddy_tx_data_cb, .context = NULL},
          .uuid.Char_UUID_128 = NUS_UUID128(0x03),
          .uuid_type = UUID_TYPE_128,
          .char_properties = CHAR_PROP_NOTIFY,
@@ -87,8 +98,35 @@ typedef struct {
     ClaudeBuddyConnCallback conn_cb;
     void* conn_ctx;
     bool cccd_enabled;
+
+    /* TX outbox. claude_buddy_profile_tx copies the caller's bytes here,
+     * then ble_gatt_characteristic_update → claude_buddy_tx_data_cb reads
+     * them out. Mutex guards against concurrent TX calls (main thread vs
+     * prompt-handler thread, if any). */
+    FuriMutex* tx_mtx;
+    uint8_t tx_outbox[CLAUDE_BUDDY_MAX_PAYLOAD];
+    uint16_t tx_outbox_len;
 } ClaudeBuddyProfile;
 _Static_assert(offsetof(ClaudeBuddyProfile, base) == 0, "base must be first");
+
+/* Called twice by the stack:
+ *   (1) at ble_gatt_characteristic_init time with data == NULL, to learn
+ *       the characteristic's maximum length. Return the variable-length cap.
+ *   (2) at each ble_gatt_characteristic_update(..., source=profile_ptr) call,
+ *       to read the current notification payload from the profile's outbox. */
+static bool claude_buddy_tx_data_cb(
+    const void* context,
+    const uint8_t** data,
+    uint16_t* data_len) {
+    if(data == NULL) {
+        *data_len = CLAUDE_BUDDY_MAX_PAYLOAD;
+        return false;
+    }
+    const ClaudeBuddyProfile* p = (const ClaudeBuddyProfile*)context;
+    *data = p->tx_outbox;
+    *data_len = p->tx_outbox_len;
+    return false; /* buffer is profile-owned; do not free */
+}
 
 /* =========================================================================
  *  BLE event handler — runs on the BLE event dispatcher thread
@@ -134,6 +172,7 @@ static FuriHalBleProfileBase* claude_buddy_profile_start(FuriHalBleProfileParams
     ClaudeBuddyProfile* p = malloc(sizeof(ClaudeBuddyProfile));
     memset(p, 0, sizeof(*p));
     p->base.config = ble_profile_claude_buddy;
+    p->tx_mtx = furi_mutex_alloc(FuriMutexTypeNormal);
 
     p->evt_handler = ble_event_dispatcher_register_svc_handler(claude_buddy_on_ble_event, p);
 
@@ -169,6 +208,7 @@ static void claude_buddy_profile_stop(FuriHalBleProfileBase* base) {
         ble_gatt_characteristic_delete(p->svc_handle, &p->chars[i]);
     }
     if(p->svc_handle) ble_gatt_service_delete(p->svc_handle);
+    if(p->tx_mtx) furi_mutex_free(p->tx_mtx);
     free(p);
 }
 
@@ -279,10 +319,15 @@ void claude_buddy_profile_set_conn_callback(
 bool claude_buddy_profile_tx(FuriHalBleProfileBase* base, const uint8_t* data, uint16_t len) {
     furi_check(base && base->config == ble_profile_claude_buddy);
     ClaudeBuddyProfile* p = (ClaudeBuddyProfile*)base;
-    UNUSED(data);
-    UNUSED(len);
     if(!p->cccd_enabled) return false;
-    if(len > CLAUDE_BUDDY_MAX_PAYLOAD) return false;
-    /* Piece 3 (next round): outbox + callback-type char data descriptor. */
-    return false;
+    if(len == 0 || len > CLAUDE_BUDDY_MAX_PAYLOAD) return false;
+
+    furi_mutex_acquire(p->tx_mtx, FuriWaitForever);
+    memcpy(p->tx_outbox, data, len);
+    p->tx_outbox_len = len;
+    /* ble_gatt_characteristic_update returns true on FAILURE
+     * (see gatt.c:144: `return result != BLE_STATUS_SUCCESS`). Invert. */
+    bool failed = ble_gatt_characteristic_update(p->svc_handle, &p->chars[ClaudeBuddyCharTx], p);
+    furi_mutex_release(p->tx_mtx);
+    return !failed;
 }

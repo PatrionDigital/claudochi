@@ -211,35 +211,29 @@ static void claude_buddy_profile_get_gap_config(GapConfig* cfg, FuriHalBleProfil
      *   Flags AD:              3 bytes (stack-injected)
      *   128-bit NUS UUID AD:  18 bytes (1 len + 1 type + 16 data)
      *   Name AD:              ≤ 10 bytes remaining
-     *     = 1 len + 1 type + ≤ 8 bytes of name data
      *
-     * Two subtleties vs. what one might naively expect:
+     * adv_name is a PLAIN string — do NOT prepend 0x09
+     * (AD_TYPE_COMPLETE_LOCAL_NAME). The STM32WB BlueNRG stack adds the
+     * AD type byte itself from the raw name we hand it. See the
+     * community seos_profile.c (bettse/seos_compatible on GitHub) which
+     * successfully advertises a custom 128-bit UUID alongside
+     * `.adv_name = "Seos"`, a plain string.
      *
-     *   (1) aci_gap_set_discoverable expects the Name arg to start with
-     *       AD_TYPE_COMPLETE_LOCAL_NAME (0x09) — the stack does NOT
-     *       inject the type byte for us. See gap.c:360 (where it skips
-     *       adv_name[0] when registering the GAP Device Name char) and
-     *       hid_profile.c:424 (which copies 0x09 from the first byte of
-     *       furi_hal_version_get_ble_local_device_name_ptr()). Our prior
-     *       build wrote "Claude-..." with 'C' (0x43) at [0], which the
-     *       stack interpreted as an invalid AD type and rejected.
+     * hid_profile.c DOES prepend 0x09 via
+     * furi_hal_version_get_ble_local_device_name_ptr()[0], but it uses
+     * a 16-bit service UUID so any off-by-one AD framing is irrelevant
+     * — both variants advertise and scan fine because CoreBluetooth is
+     * permissive and reassembles from the scan response as well.
      *
-     *   (2) Even with the type byte fixed, "Claude-Raderado" (15 chars)
-     *       overflows the 31-byte total budget by 7 bytes; the stack
-     *       logs "set_discoverable failed N" at gap.c:470 and silently
-     *       leaves the state as Advertising anyway, which is why the
-     *       Flipper UI showed "BT: Advertising" while nothing actually
-     *       went out on air.
-     *
-     * Name format: REFERENCE.md suggests "Claude" + "a few bytes of your
-     * BT MAC" for device distinguishability. With 8 chars of name data
-     * we have room for "Claude" (6) + 2 hex digits of the last MAC byte. */
+     * With a 128-bit UUID in adv we have exactly 10 bytes left for the
+     * name AD = 1 (wire len) + 1 (AD type) + 8 bytes name. Per
+     * REFERENCE.md ("starting with Claude ... appending a few bytes of
+     * your BT MAC") the name is "Claude" + 2 hex digits of MAC[0]. */
     const uint8_t* mac = furi_hal_version_get_ble_mac();
     snprintf(
         cfg->adv_name,
         FURI_HAL_VERSION_DEVICE_NAME_LENGTH,
-        "%c" "Claude%02X",
-        0x09, /* AD_TYPE_COMPLETE_LOCAL_NAME prefix byte */
+        "Claude%02X",
         mac[0]);
 }
 

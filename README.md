@@ -103,9 +103,12 @@ raderado/
 
 ## Troubleshooting
 
-- **`ufbt launch` hangs or fails to upload.** qFlipper or a `cli` session may
-  be holding the port. Close them. On macOS, `lsof /dev/cu.usbmodemflip_*` shows
-  who's attached.
+- **`ufbt launch` hangs at `Using flip_<name>...` and never progresses.**
+  The Flipper's CLI only emits its prompt when the display is awake and you're
+  at the home/dolphin screen. Wake the screen with any button press and retry
+  immediately. If the screen is frozen, force-reboot by holding **Back** for
+  ~5 seconds. If the port itself is held, `lsof /dev/cu.usbmodemflip_*` on
+  macOS will show the offending process (usually qFlipper) — quit it.
 - **Build errors about undefined BLE symbols.** The SDK channel is wrong —
   re-run `ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release`.
 - **App builds but the desktop picker doesn't see "Claude-Raderado".** Three

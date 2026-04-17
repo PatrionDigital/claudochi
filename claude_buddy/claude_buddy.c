@@ -7,6 +7,7 @@
 #include "claude_buddy_profile.h"
 
 #include <furi.h>
+#include <furi_hal_version.h>
 #include <bt/bt_service/bt.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
@@ -24,6 +25,8 @@ typedef struct {
     size_t rx_total;
     uint8_t rx_preview[RX_PREVIEW_BYTES];
     uint8_t rx_preview_len;
+
+    char adv_name[12]; /* what we expect the peripheral to advertise as */
 
     FuriMessageQueue* input_queue;
     ViewPort* view_port;
@@ -58,7 +61,9 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     canvas_clear(canvas);
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 2, 10, "Claude Buddy");
+    char title[24];
+    snprintf(title, sizeof(title), "Buddy %s", app->adv_name);
+    canvas_draw_str(canvas, 2, 10, title);
 
     canvas_set_font(canvas, FontSecondary);
 
@@ -66,10 +71,10 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     snprintf(line, sizeof(line), "BT: %s", bt_status_str(status));
     canvas_draw_str(canvas, 2, 24, line);
 
-    snprintf(line, sizeof(line), "Subscribed: %s", cccd ? "yes" : "no");
+    snprintf(line, sizeof(line), "Subscribed: %s  RX:%lu", cccd ? "y" : "n", (unsigned long)total);
     canvas_draw_str(canvas, 2, 36, line);
 
-    snprintf(line, sizeof(line), "RX: %lu bytes", (unsigned long)total);
+    snprintf(line, sizeof(line), "Look for \"%s\" on BLE", app->adv_name);
     canvas_draw_str(canvas, 2, 48, line);
 
     if(preview_len > 0) {
@@ -125,6 +130,11 @@ int32_t claude_buddy_app(void* p) {
     UNUSED(p);
     ClaudeBuddyApp* app = malloc(sizeof(ClaudeBuddyApp));
     memset(app, 0, sizeof(*app));
+
+    /* Precompute the name we expect to advertise as — must match the
+     * snprintf in claude_buddy_profile_get_gap_config. */
+    const uint8_t* mac = furi_hal_version_get_ble_mac();
+    snprintf(app->adv_name, sizeof(app->adv_name), "Claude%02X", mac[0]);
 
     app->mtx = furi_mutex_alloc(FuriMutexTypeNormal);
     app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));

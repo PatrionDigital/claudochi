@@ -319,8 +319,15 @@ void claude_buddy_profile_set_conn_callback(
 bool claude_buddy_profile_tx(FuriHalBleProfileBase* base, const uint8_t* data, uint16_t len) {
     furi_check(base && base->config == ble_profile_claude_buddy);
     ClaudeBuddyProfile* p = (ClaudeBuddyProfile*)base;
-    if(!p->cccd_enabled) return false;
     if(len == 0 || len > CLAUDE_BUDDY_MAX_PAYLOAD) return false;
+
+    /* Deliberately do NOT short-circuit on our tracked cccd_enabled flag.
+     * On a bonded reconnect the stack restores the CCCD value from the
+     * bond without emitting an ACI_GATT_ATTRIBUTE_MODIFIED event, so
+     * our flag can stay false while notifications would in fact be
+     * delivered. Call through and let the stack be the authority — it
+     * silently no-ops the notify if no central is subscribed, rather
+     * than returning an error. */
 
     furi_mutex_acquire(p->tx_mtx, FuriWaitForever);
     memcpy(p->tx_outbox, data, len);

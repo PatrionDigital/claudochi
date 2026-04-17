@@ -222,18 +222,23 @@ static void claude_buddy_profile_get_gap_config(GapConfig* cfg, FuriHalBleProfil
     memcpy(cfg->mac_address, furi_hal_version_get_ble_mac(), GAP_MAC_ADDR_SIZE);
     cfg->mac_address[2] += 2;
 
-    /* With a 16-bit placeholder UUID in adv we have plenty of room in
-     * the 31-byte budget for the full name:
-     *   Flags AD:              3 bytes
-     *   16-bit UUID AD:        4 bytes
-     *   Name AD:               ≤ 24 bytes → up to 22 chars of name
+    /* adv_name construction mirrors hid_profile.c:420 exactly — the only
+     * change is substituting "Claude" for "Control". That profile
+     * advertises successfully as e.g. "Control Raderado" and is visible
+     * in macOS Bluetooth settings, so we follow its pattern 1:1 rather
+     * than recombine fragments from other sources:
      *
-     * Name: "Claude-<flipper_name>" per REFERENCE.md. "Claude-Raderado"
-     * is 15 chars, fits comfortably. */
+     *   - First byte of adv_name is 0x09 (AD_TYPE_COMPLETE_LOCAL_NAME),
+     *     copied from furi_hal_version_get_ble_local_device_name_ptr()[0]
+     *     which furi_hal_version.c:106 explicitly initializes to
+     *     AD_TYPE_COMPLETE_LOCAL_NAME.
+     *   - Format "%c%s %s" with space separator, matching HID. */
     snprintf(
         cfg->adv_name,
         FURI_HAL_VERSION_DEVICE_NAME_LENGTH,
-        "Claude-%s",
+        "%c%s %s",
+        furi_hal_version_get_ble_local_device_name_ptr()[0],
+        "Claude",
         furi_hal_version_get_name_ptr());
 }
 

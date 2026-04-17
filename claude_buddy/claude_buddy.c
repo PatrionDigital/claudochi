@@ -132,11 +132,12 @@ int32_t claude_buddy_app(void* p) {
     memset(app, 0, sizeof(*app));
 
     /* Precompute the name we expect to advertise as — must match the
-     * snprintf in claude_buddy_profile_get_gap_config. */
+     * snprintf in claude_buddy_profile_get_gap_config (minus the 0x09
+     * AD type byte that the profile's buffer has at [0]). */
     snprintf(
         app->adv_name,
         sizeof(app->adv_name),
-        "Claude-%s",
+        "Claude %s",
         furi_hal_version_get_name_ptr());
 
     app->mtx = furi_mutex_alloc(FuriMutexTypeNormal);

@@ -175,11 +175,26 @@ static void claude_buddy_profile_stop(FuriHalBleProfileBase* base) {
 /* =========================================================================
  *  GAP config — advertising, pairing, connection params
  * ========================================================================= */
+/* NOTE on adv_service:
+ *
+ * The Flipper's GAP layer supports advertising one service UUID, and our
+ * first attempt used 128-bit NUS (0x6e400001-...) to match what the Claude
+ * desktop picker probably filters on. With a 128-bit UUID (18 bytes) +
+ * flags (3 bytes) + name AD, the 31-byte legacy-adv budget is tight and
+ * in practice our peripheral never appeared in LightBlue's scan.
+ *
+ * Both in-tree reference profiles (serial_profile.c, hid_profile.c)
+ * advertise 16-bit UUIDs only. We follow their known-working pattern here:
+ * advertise with a 16-bit placeholder, and keep the full 128-bit NUS
+ * service at the GATT layer so centrals discover it post-connection. If
+ * Claude Desktop's picker turns out to require the 128-bit NUS in adv
+ * data itself, we'll revisit — but we can't test that path until the
+ * server-side Hardware Buddy gate is flipped for our account. */
 static const GapConfig claude_buddy_gap_template = {
     .adv_service =
         {
-            .UUID_Type = UUID_TYPE_128,
-            .Service_UUID_128 = NUS_UUID128(0x01),
+            .UUID_Type = UUID_TYPE_16,
+            .Service_UUID_16 = 0x0000, /* placeholder — real NUS UUID is in GATT */
         },
     .appearance_char = 0x0000, /* Generic / Unknown */
 #ifdef CLAUDE_BUDDY_ENCRYPTED
@@ -207,34 +222,19 @@ static void claude_buddy_profile_get_gap_config(GapConfig* cfg, FuriHalBleProfil
     memcpy(cfg->mac_address, furi_hal_version_get_ble_mac(), GAP_MAC_ADDR_SIZE);
     cfg->mac_address[2] += 2;
 
-    /* Legacy BLE advertising is a hard 31-byte budget:
-     *   Flags AD:              3 bytes (stack-injected)
-     *   128-bit NUS UUID AD:  18 bytes (1 len + 1 type + 16 data)
-     *   Name AD:              ≤ 10 bytes remaining
+    /* With a 16-bit placeholder UUID in adv we have plenty of room in
+     * the 31-byte budget for the full name:
+     *   Flags AD:              3 bytes
+     *   16-bit UUID AD:        4 bytes
+     *   Name AD:               ≤ 24 bytes → up to 22 chars of name
      *
-     * adv_name is a PLAIN string — do NOT prepend 0x09
-     * (AD_TYPE_COMPLETE_LOCAL_NAME). The STM32WB BlueNRG stack adds the
-     * AD type byte itself from the raw name we hand it. See the
-     * community seos_profile.c (bettse/seos_compatible on GitHub) which
-     * successfully advertises a custom 128-bit UUID alongside
-     * `.adv_name = "Seos"`, a plain string.
-     *
-     * hid_profile.c DOES prepend 0x09 via
-     * furi_hal_version_get_ble_local_device_name_ptr()[0], but it uses
-     * a 16-bit service UUID so any off-by-one AD framing is irrelevant
-     * — both variants advertise and scan fine because CoreBluetooth is
-     * permissive and reassembles from the scan response as well.
-     *
-     * With a 128-bit UUID in adv we have exactly 10 bytes left for the
-     * name AD = 1 (wire len) + 1 (AD type) + 8 bytes name. Per
-     * REFERENCE.md ("starting with Claude ... appending a few bytes of
-     * your BT MAC") the name is "Claude" + 2 hex digits of MAC[0]. */
-    const uint8_t* mac = furi_hal_version_get_ble_mac();
+     * Name: "Claude-<flipper_name>" per REFERENCE.md. "Claude-Raderado"
+     * is 15 chars, fits comfortably. */
     snprintf(
         cfg->adv_name,
         FURI_HAL_VERSION_DEVICE_NAME_LENGTH,
-        "Claude%02X",
-        mac[0]);
+        "Claude-%s",
+        furi_hal_version_get_name_ptr());
 }
 
 /* =========================================================================

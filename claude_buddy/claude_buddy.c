@@ -133,8 +133,11 @@ int32_t claude_buddy_app(void* p) {
 
     /* Precompute the name we expect to advertise as — must match the
      * snprintf in claude_buddy_profile_get_gap_config. */
-    const uint8_t* mac = furi_hal_version_get_ble_mac();
-    snprintf(app->adv_name, sizeof(app->adv_name), "Claude%02X", mac[0]);
+    snprintf(
+        app->adv_name,
+        sizeof(app->adv_name),
+        "Claude-%s",
+        furi_hal_version_get_name_ptr());
 
     app->mtx = furi_mutex_alloc(FuriMutexTypeNormal);
     app->input_queue = furi_message_queue_alloc(8, sizeof(InputEvent));

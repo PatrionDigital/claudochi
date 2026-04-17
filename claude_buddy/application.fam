@@ -1,0 +1,15 @@
+App(
+    appid="claude_buddy",
+    name="Claude Buddy",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="claude_buddy_app",
+    stack_size=4 * 1024,
+    sources=["*.c"],
+    fap_libs=["ble_profile"],
+    fap_description="Anthropic Hardware Buddy bridge for Claude desktop",
+    fap_version="0.1",
+    fap_category="Bluetooth",
+    # fap_icon="icon_10px.png",  # add in Phase 2
+    # To enable LE Secure Connections + bonding (Phase 2):
+    #   cdefines=["CLAUDE_BUDDY_ENCRYPTED"],
+)

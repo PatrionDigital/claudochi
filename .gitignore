@@ -1,0 +1,7 @@
+reference/
+.ufbt/
+*.fap
+dist/
+build/
+.vscode/
+.DS_Store

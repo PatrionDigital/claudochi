@@ -199,23 +199,6 @@ static int32_t claude_buddy_rx_thread(void* ctx) {
 }
 
 /* ============================================================
- *  TX helper — send one JSON line
- * ============================================================ */
-
-static void send_permission(ClaudeBuddyApp* app, const char* id, const char* decision) {
-    if(!app->profile) return;
-    char json[160];
-    int n = snprintf(
-        json,
-        sizeof(json),
-        "{\"cmd\":\"permission\",\"id\":\"%s\",\"decision\":\"%s\"}\n",
-        id,
-        decision);
-    if(n <= 0 || (size_t)n >= sizeof(json)) return;
-    claude_buddy_profile_tx(app->profile, (const uint8_t*)json, (uint16_t)n);
-}
-
-/* ============================================================
  *  Drawing
  * ============================================================ */
 
@@ -359,11 +342,40 @@ int32_t claude_buddy_app(void* p) {
         if(mode != ClaudeBuddyModePrompt) continue;
         if(id[0] == '\0') continue;
 
-        if(event.key == InputKeyOk) {
-            send_permission(app, id, "once");
-        } else if(event.key == InputKeyLeft) {
-            send_permission(app, id, "deny");
+        const char* decision = NULL;
+        if(event.key == InputKeyOk) decision = "once";
+        else if(event.key == InputKeyLeft) decision = "deny";
+        if(!decision) continue;
+
+        bool tx_ok = false;
+        if(app->profile) {
+            char json[160];
+            int n = snprintf(
+                json,
+                sizeof(json),
+                "{\"cmd\":\"permission\",\"id\":\"%s\",\"decision\":\"%s\"}\n",
+                id,
+                decision);
+            if(n > 0 && (size_t)n < sizeof(json)) {
+                tx_ok = claude_buddy_profile_tx(
+                    app->profile, (const uint8_t*)json, (uint16_t)n);
+            }
         }
+
+        /* Dismiss modal locally regardless of TX result — user gets
+         * immediate visual ack. Note the result on the status line so
+         * they can distinguish "sent" from "tried but BLE refused". */
+        furi_mutex_acquire(app->mtx, FuriWaitForever);
+        app->mode = ClaudeBuddyModeNormal;
+        app->prompt_id[0] = '\0';
+        snprintf(
+            app->hb_msg,
+            sizeof(app->hb_msg),
+            "sent: %s (%s)",
+            decision,
+            tx_ok ? "ok" : "fail");
+        furi_mutex_release(app->mtx);
+        view_port_update(app->view_port);
     }
 
     /* Teardown: stop drain thread, then tear down BLE, then GUI. */

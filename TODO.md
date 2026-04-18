@@ -17,8 +17,9 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 
 ## Next up — low-hanging polish
 
-- [ ] **FAP icon** (~15 min). 10x10 1-bit PNG, add `fap_icon="claude_buddy_10px.png"` to application.fam. Simple Claude-brand glyph.
+- [ ] **FAP icon** (~15 min). 10x10 1-bit PNG, add `fap_icon="claude_buddy_10px.png"` to application.fam. Stylized silhouette of the Claude Code mascot creature (the terracotta boxy robot character — see reference image in commit history or `docs/mascot_reference.png` if saved).
   - Source: research confirms format at `reference/scripts/fbt/elfmanifest.py:56-63`
+- [ ] **Summarize `msg` to ≤2 words for display**. Current heartbeat `msg` field is "running: yarn test" / "approve: Bash" / free-form text from the desktop. Truncates awkwardly on the 128-px Flipper screen. Map to short tokens — e.g. "RUN", "WAIT", "DONE", "ASK" — either by local string matching, or by asking the desktop for a short form (Phase 5 protocol ask)
 - [ ] **Tag v0.1 release** on GitHub
 - [ ] **README rewrite** — current one has speculative troubleshooting from the debugging thrash. Replace with the actual validated flow + screenshots of the Flipper UI in each state
 - [ ] **Show "reconnecting..." on Flipper when BT drops** instead of silently falling back to "Advertising"

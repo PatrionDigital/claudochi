@@ -15,5 +15,9 @@ App(
     # desktop). Remove this line to rebuild Phase 1's unencrypted link for
     # diagnostics — the profile code branches on CLAUDE_BUDDY_ENCRYPTED.
     cdefines=["CLAUDE_BUDDY_ENCRYPTED"],
-    # fap_icon="icon_10px.png",  # add in Phase 3
+    # 10x10 1-bit silhouette of the Claude Code mascot (boxy terracotta
+    # robot). Stylized to the Flipper's OLED constraints; preserved here
+    # so future tweaks go through version control and the build pipeline
+    # (scripts/flipper/assets/icon.py inverts + heatshrink-compresses).
+    fap_icon="icons/claude_buddy_10px.png",
 )

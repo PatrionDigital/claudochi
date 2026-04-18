@@ -158,6 +158,7 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
     if((v = json_find_key(line, tokens, n, "msg")) >= 0)
         json_tok_strcpy(line, &tokens[v], app->hb_msg, sizeof(app->hb_msg));
 
+    ClaudeBuddyMode prev_mode = app->mode;
     int p_idx = json_find_key(line, tokens, n, "prompt");
     if(p_idx >= 0 && tokens[p_idx].type == JSMN_OBJECT) {
         if((v = json_find_key(line, tokens, n, "id")) >= 0)
@@ -171,8 +172,18 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
         /* Desktop cleared the prompt — drop the modal. */
         app->mode = ClaudeBuddyModeNormal;
     }
+    bool entering_prompt = (prev_mode != ClaudeBuddyModePrompt) &&
+                           (app->mode == ClaudeBuddyModePrompt);
 
     furi_mutex_release(app->mtx);
+
+    /* Buzz on the Normal → Prompt edge so the user notices a decision is
+     * waiting. Don't re-buzz on subsequent heartbeats while already in
+     * the modal — that would vibrate every 10s until they respond. */
+    if(entering_prompt && app->notifications) {
+        notification_message(app->notifications, &sequence_single_vibro);
+    }
+
     view_port_update(app->view_port);
 }
 

@@ -217,41 +217,24 @@ static void claude_buddy_profile_stop(FuriHalBleProfileBase* base) {
  * ========================================================================= */
 /* NOTE on adv_service:
  *
- * Claude Desktop's Hardware Buddy picker appears to do a service-UUID-
- * filtered scan for NUS (it skipped our peripheral entirely when we
- * advertised only a 16-bit placeholder, even though LightBlue with no
- * filter saw us fine). REFERENCE.md corroborates: "Advertise a name
- * starting with Claude over the Nordic UART Service so the device
- * picker can filter to you." — "filter to you" = UUID filter.
+ * The Flipper's GAP layer supports advertising one service UUID, and our
+ * first attempt used 128-bit NUS (0x6e400001-...) to match what the Claude
+ * desktop picker probably filters on. With a 128-bit UUID (18 bytes) +
+ * flags (3 bytes) + name AD, the 31-byte legacy-adv budget is tight and
+ * in practice our peripheral never appeared in LightBlue's scan.
  *
- * With a 128-bit UUID in adv, the 31-byte legacy-adv budget is tight:
- *   Flags AD:    3 bytes
- *   UUID-128 AD: 18 bytes (1 wire-len + 1 AD type + 16 data)
- *   Name AD:    10 bytes remaining, = 1 wire-len + 1 AD type + 8 chars
- * So our name is capped at 8 chars of data. Per REFERENCE.md's
- * "Appending a few bytes of your BT MAC keeps multiple devices
- * distinguishable", we use "Claude" (6) + 2 hex digits of MAC[0]. */
+ * Both in-tree reference profiles (serial_profile.c, hid_profile.c)
+ * advertise 16-bit UUIDs only. We follow their known-working pattern here:
+ * advertise with a 16-bit placeholder, and keep the full 128-bit NUS
+ * service at the GATT layer so centrals discover it post-connection. If
+ * Claude Desktop's picker turns out to require the 128-bit NUS in adv
+ * data itself, we'll revisit — but we can't test that path until the
+ * server-side Hardware Buddy gate is flipped for our account. */
 static const GapConfig claude_buddy_gap_template = {
     .adv_service =
         {
-            .UUID_Type = UUID_TYPE_128,
-            .Service_UUID_128 =
-                {0x9e,
-                 0xca,
-                 0xdc,
-                 0x24,
-                 0x0e,
-                 0xe5,
-                 0xa9,
-                 0xe0,
-                 0x93,
-                 0xf3,
-                 0xa3,
-                 0xb5,
-                 0x01,
-                 0x00,
-                 0x40,
-                 0x6e},
+            .UUID_Type = UUID_TYPE_16,
+            .Service_UUID_16 = 0x0000, /* placeholder — real NUS UUID is in GATT */
         },
     .appearance_char = 0x0000, /* Generic / Unknown */
 #ifdef CLAUDE_BUDDY_ENCRYPTED
@@ -279,21 +262,24 @@ static void claude_buddy_profile_get_gap_config(GapConfig* cfg, FuriHalBleProfil
     memcpy(cfg->mac_address, furi_hal_version_get_ble_mac(), GAP_MAC_ADDR_SIZE);
     cfg->mac_address[2] += 2;
 
-    /* adv_name buffer layout is { 0x09 (AD_TYPE_COMPLETE_LOCAL_NAME),
-     * then up to 8 chars of name data, then NUL }. The 0x09 prefix is
-     * a Flipper convention (see hid_profile.c:420 copying the first
-     * byte from furi_hal_version_get_ble_local_device_name_ptr()).
+    /* adv_name construction mirrors hid_profile.c:420 exactly — the only
+     * change is substituting "Claude" for "Control". That profile
+     * advertises successfully as e.g. "Control Raderado" and is visible
+     * in macOS Bluetooth settings, so we follow its pattern 1:1 rather
+     * than recombine fragments from other sources:
      *
-     * With a 128-bit UUID in adv, 8 chars is our hard cap. Format is
-     * "Claude" + 2 hex digits of the BT MAC's low byte, for
-     * distinguishability across multiple devices in the picker. */
-    const uint8_t* mac = furi_hal_version_get_ble_mac();
+     *   - First byte of adv_name is 0x09 (AD_TYPE_COMPLETE_LOCAL_NAME),
+     *     copied from furi_hal_version_get_ble_local_device_name_ptr()[0]
+     *     which furi_hal_version.c:106 explicitly initializes to
+     *     AD_TYPE_COMPLETE_LOCAL_NAME.
+     *   - Format "%c%s %s" with space separator, matching HID. */
     snprintf(
         cfg->adv_name,
         FURI_HAL_VERSION_DEVICE_NAME_LENGTH,
-        "%c" "Claude%02X",
+        "%c%s %s",
         furi_hal_version_get_ble_local_device_name_ptr()[0],
-        mac[0]);
+        "Claude",
+        furi_hal_version_get_name_ptr());
 }
 
 /* =========================================================================

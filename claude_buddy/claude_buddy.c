@@ -257,25 +257,25 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         return;
     }
 
-    /* Normal mode:
-     *   left  — 32x32 mascot at (2, 14)
-     *   right — status text stacked at x=40 (88px wide column)
-     *   bottom — msg line at y=60, full width, wraps under the mascot */
-    canvas_draw_icon(canvas, 2, 14, &I_mascot_32x32);
+    /* Normal mode: 64×64 mascot fills the left half of the 128×64 screen,
+     * right 64 px holds stacked title + condensed status + msg. */
+    canvas_draw_icon(canvas, 0, 0, &I_mascot_64x64);
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 40, 12, "Claude");
-    canvas_draw_str(canvas, 40, 24, "Buddy");
+    canvas_draw_str(canvas, 66, 10, "Claude");
+    canvas_draw_str(canvas, 66, 22, "Buddy");
 
     canvas_set_font(canvas, FontSecondary);
-    char line[48];
-    snprintf(line, sizeof(line), "BT:%s %c", bt_status_str(bt_status), cccd ? 'y' : 'n');
-    canvas_draw_str(canvas, 40, 36, line);
+    char line[32];
+    snprintf(line, sizeof(line), "%s%c", bt_status_str(bt_status), cccd ? '+' : ' ');
+    canvas_draw_str(canvas, 66, 34, line);
 
     snprintf(line, sizeof(line), "T%d R%d W%d", t, r, w);
-    canvas_draw_str(canvas, 40, 46, line);
+    canvas_draw_str(canvas, 66, 44, line);
 
-    canvas_draw_str(canvas, 2, 61, hb_msg[0] ? hb_msg : "(waiting...)");
+    /* msg: short form (TODO: summarize to 1-2 words on the desktop side
+     * or locally). Truncated to ~10 chars by canvas clip, clean enough. */
+    canvas_draw_str(canvas, 66, 56, hb_msg[0] ? hb_msg : "(waiting)");
 }
 
 /* ============================================================

@@ -37,6 +37,30 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 - [ ] **v1 art**: one simple mascot × 5 states — aim for ~5-8 frames per state, 48×48 px, 4-8 FPS
 - [ ] **Multi-pet support** (v2+): port the "18 pets × 7 anims" concept from the ESP32 reference. Gate on `preference` key TBD. Could be "each Flipper picks a pet at first pair, stored in furi_hal prefs"
 
+## Tamagotchi layer
+
+The desktop's heartbeat `msg` field already streams the user's input and tool activity in near-real time. That's a rich signal we haven't tapped — currently it's rendered as plain text. The idea: let that stream *care for* the pet. Mechanics sketch, to be refined when we get here:
+
+- [ ] **Needs decay over time.** Hunger, happiness, energy, bond. Each drops by a small amount per minute when the desktop is idle.
+- [ ] **Interactions refill needs.**
+  - User-input activity (msg length, rate of change) → **attention / bond**
+  - Token accumulation (`tokens_today`) → **fullness / hunger ↓**
+  - Approved tool calls → **happiness** (denied = small stress)
+  - Time with active session (`total > 0`) → **energy** (or exhaustion if sustained)
+- [ ] **Keyword reactions.** Cheap text scan on `msg` to trigger one-off animations:
+  - Exclamation marks / "!" count → startled or excited
+  - "please" / "thanks" → happy wiggle
+  - "fix" / "bug" / "error" → concerned face
+  - Profanity / frustration markers → covers ears / hides
+  - Food words ("lunch", "coffee") → eating animation
+  - Easter-egg triggers (birthday, project milestones) → celebrate
+- [ ] **Mood state derived from needs.** Not just the raw heartbeat. E.g. happy pet + low energy = yawning-idle; high attention = playful-idle
+- [ ] **Personality seed.** Derive from the Flipper's BD_ADDR on first pair — each device gets stable "trait weights" that bias which reactions fire. Two Flippers running the same firmware feel subtly different
+- [ ] **Persistence.** Save needs + personality to SD card every few minutes; load on app start. Pet survives reboots with memory intact
+- [ ] **Randomness layer.** Base state + weighted-random variant frames. Occasional "thinking", "scratching", "looking around" idle fidgets so the pet feels alive instead of looped
+- [ ] **Neglect consequences.** After prolonged idle without any desktop activity, pet gets sadder / dirtier / goes to sleep. Comes back happy on next heartbeat burst. Gives the coming-back-to-your-desk moment emotional weight
+- [ ] **Visible stats UI** (toggleable second view): current needs as 4 bars, recent triggers log, total "care score." Pure diagnostics, not required for the core loop
+
 ## Protocol completeness (vs REFERENCE.md)
 
 - [ ] **Richer permission decisions**: we currently send only `once` and `deny`. Spec also supports `session` and `always`. Add a second input mode (long-press or Up/Down cycle) to select decision type before confirming

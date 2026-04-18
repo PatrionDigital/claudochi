@@ -48,6 +48,14 @@ typedef enum {
     ClaudeBuddyModePrompt,
 } ClaudeBuddyMode;
 
+/* Visible pet state, derived from BT connection + heartbeat counts. */
+typedef enum {
+    PetStateSleep,      /* disconnected, or nothing open on the desktop */
+    PetStateIdle,       /* connected + sessions open but not generating */
+    PetStateBusy,       /* running > 0 */
+    PetStateAttention,  /* waiting > 0 or modal open — decision needed */
+} PetState;
+
 typedef struct {
     FuriMutex* mtx;
 
@@ -136,6 +144,31 @@ static const char* bt_status_str(BtStatus s) {
     case BtStatusAdvertising: return "Advertising";
     case BtStatusConnected: return "Connected";
     default: return "?";
+    }
+}
+
+/* Derive pet visible state from the live fields. Call under app->mtx
+ * (reads multiple fields; caller must hold the lock). */
+static PetState pet_state_from_app(
+    BtStatus bt,
+    ClaudeBuddyMode mode,
+    int running,
+    int waiting,
+    int total) {
+    if(bt != BtStatusConnected) return PetStateSleep;
+    if(mode == ClaudeBuddyModePrompt || waiting > 0) return PetStateAttention;
+    if(running > 0) return PetStateBusy;
+    if(total > 0) return PetStateIdle;
+    return PetStateSleep;
+}
+
+static const Icon* pet_sprite(PetState s) {
+    switch(s) {
+    case PetStateSleep: return &I_mascot_sleep_64x64;
+    case PetStateBusy: return &I_mascot_busy_64x64;
+    case PetStateAttention: return &I_mascot_attention_64x64;
+    case PetStateIdle: /* fall through */
+    default: return &I_mascot_idle_64x64;
     }
 }
 
@@ -258,8 +291,10 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     }
 
     /* Normal mode: 64×64 mascot fills the left half of the 128×64 screen,
-     * right 64 px holds stacked title + condensed status + msg. */
-    canvas_draw_icon(canvas, 0, 0, &I_mascot_64x64);
+     * right 64 px holds stacked title + condensed status + msg. The
+     * specific mascot frame is chosen from the derived pet state. */
+    PetState state = pet_state_from_app(bt_status, mode, r, w, t);
+    canvas_draw_icon(canvas, 0, 0, pet_sprite(state));
 
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 66, 10, "Claude");

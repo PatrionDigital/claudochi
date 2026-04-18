@@ -20,4 +20,11 @@ App(
     # so future tweaks go through version control and the build pipeline
     # (scripts/flipper/assets/icon.py inverts + heatshrink-compresses).
     fap_icon="icons/claude_buddy_10px.png",
+    # In-app icon assets. *.png files under this dir are compiled into the
+    # FAP as addressable symbols — e.g. mascot_32x32.png → I_mascot_32x32
+    # with the header exposed as <symbol>_icons.h. Animated icons become
+    # subdirectories with frame_NN.png + a frame_rate text file (planned
+    # for Phase 5 mascot state machine).
+    fap_icon_assets="assets",
+    fap_icon_assets_symbol="claude_buddy",
 )

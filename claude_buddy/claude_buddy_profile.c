@@ -215,21 +215,45 @@ static void claude_buddy_profile_stop(FuriHalBleProfileBase* base) {
 /* =========================================================================
  *  GAP config — advertising, pairing, connection params
  * ========================================================================= */
-/* NOTE on adv_service:
+/* NOTE on adv_service — authoritative budget math.
  *
- * The Flipper's GAP layer supports advertising one service UUID, and our
- * first attempt used 128-bit NUS (0x6e400001-...) to match what the Claude
- * desktop picker probably filters on. With a 128-bit UUID (18 bytes) +
- * flags (3 bytes) + name AD, the 31-byte legacy-adv budget is tight and
- * in practice our peripheral never appeared in LightBlue's scan.
+ * aci_gap_set_discoverable AUTO-INJECTS two AD fields, per ST's doxygen
+ * at stm32wb_copro/wpan/ble/core/auto/ble_gap_aci.h L127-152:
+ *   - Flags AD            (3 bytes on wire: 1 len + 1 type 0x01 + 1 value)
+ *   - TX Power Level AD   (3 bytes on wire: 1 len + 1 type 0x0A + 1 value)
+ * Plus a Peripheral Connection Interval Range AD (6 bytes) IF both
+ * Slave_Conn_Interval_Min and _Max are non-zero. Flipper's gap.c passes
+ * 0/0 so that field is absent here.
  *
- * Both in-tree reference profiles (serial_profile.c, hid_profile.c)
- * advertise 16-bit UUIDs only. We follow their known-working pattern here:
- * advertise with a 16-bit placeholder, and keep the full 128-bit NUS
- * service at the GATT layer so centrals discover it post-connection. If
- * Claude Desktop's picker turns out to require the 128-bit NUS in adv
- * data itself, we'll revisit — but we can't test that path until the
- * server-side Hardware Buddy gate is flipped for our account. */
+ * Legacy adv PDU cap is 31 bytes. With zero conn-intervals, that leaves
+ *   31 - 3 - 3 = 25 bytes for Name + ServiceUUID together.
+ *
+ * Each AD is (1 wire-len byte) + (Length_param bytes caller supplies).
+ * Length_param itself counts the AD type byte the caller prepends. So:
+ *   Local_Name_Length  = strlen("<0x09><chars>")   = 1 + char_count
+ *   Service_Uuid_Length = 1 (type=0x07) + 16 (128-bit UUID data) = 17
+ *                     or 1 (type=0x03) + 2  (16-bit UUID data)  = 3
+ *
+ * Fit check (zero conn-intervals):
+ *   (1 + Local_Name_Length) + (1 + Service_Uuid_Length) <= 25
+ *   Local_Name_Length + Service_Uuid_Length <= 23
+ *
+ *   128-bit in adv:  Local_Name_Length <= 6  →  0x09 + 5 name chars max
+ *    16-bit in adv:  Local_Name_Length <= 20 →  0x09 + 19 name chars max
+ *
+ * Over-budget returns BLE_STATUS_INVALID_PARAMS (0x92), which Flipper's
+ * gap.c:470 silently logs; the state machine transitions to Advertising
+ * anyway, so our UI reads "BT: Advertising" while nothing is on air.
+ *
+ * Claude Desktop's Hardware Buddy picker filters ONLY by device-name
+ * prefix "claude" or "nibblet" (case-insensitive) — confirmed by
+ * reading the main-process event handler in /Applications/Claude.app's
+ * extracted asar. It calls Chromium's requestDevice with
+ * acceptAllDevices:true and lists the NUS UUID under optionalServices
+ * (which authorizes post-connect GATT access, not scan filtering).
+ * Therefore we DO NOT need the 128-bit NUS UUID in the adv packet;
+ * the 16-bit placeholder is fine, and the full NUS UUID is discovered
+ * over GATT after the central connects. */
 static const GapConfig claude_buddy_gap_template = {
     .adv_service =
         {

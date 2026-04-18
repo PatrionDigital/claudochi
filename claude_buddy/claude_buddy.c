@@ -274,19 +274,25 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     canvas_clear(canvas);
 
     if(mode == ClaudeBuddyModePrompt) {
+        /* Prompt modal: draw the attention mascot on the left so the user
+         * sees the pet reacting, with tool name / hint / keybindings
+         * stacked in the right 64 px. */
+        canvas_draw_icon(canvas, 0, 0, &I_mascot_attention_64x64);
+
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 2, 10, "Permission?");
+        canvas_draw_str(canvas, 66, 10, "Allow?");
 
         canvas_set_font(canvas, FontSecondary);
-        char line[40];
-        snprintf(line, sizeof(line), "Tool: %s", prompt_tool);
-        canvas_draw_str(canvas, 2, 24, line);
+        char line[32];
+        snprintf(line, sizeof(line), "%s", prompt_tool);
+        canvas_draw_str(canvas, 66, 22, line);
 
-        /* Hint can be longer than the screen — strlcpy truncates cleanly. */
+        /* Hint can be longer than the right column; strlcpy truncates. */
         strlcpy(line, prompt_hint, sizeof(line));
-        canvas_draw_str(canvas, 2, 36, line);
+        canvas_draw_str(canvas, 66, 34, line);
 
-        canvas_draw_str(canvas, 2, 62, "OK=approve  Left=deny");
+        canvas_draw_str(canvas, 66, 52, "OK:yes");
+        canvas_draw_str(canvas, 66, 62, "L:deny");
         return;
     }
 

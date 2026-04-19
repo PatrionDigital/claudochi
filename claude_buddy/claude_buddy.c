@@ -188,6 +188,13 @@ typedef struct {
     uint32_t narration_until_ms;
     char narration_decision[16]; /* "once" | "deny" */
 
+    /* Owner name — cached from `{"cmd":"owner","name":"..."}`,
+     * which the desktop sends one-shot on connect per REFERENCE.md.
+     * Empty string means no name received yet. Not persisted; the
+     * desktop re-sends on every (re)connect. Future UI will use
+     * this for personalization on the idle screen / stats panel. */
+    char owner_name[32];
+
     /* GUI */
     FuriMessageQueue* input_queue;
     ViewPort* view_port;
@@ -860,9 +867,22 @@ static void handle_cmd(
             bt_forget_bonded_devices(app->bt);
             ok = true;
         }
+    } else if(strcmp(cmd, "owner") == 0) {
+        /* Desktop sends this once on connect with the user's first
+         * name from their account: {"cmd":"owner","name":"Felix"}.
+         * We cache it under the mutex for future UI
+         * personalization. */
+        int name_idx = json_find_key(line, tokens, n, "name");
+        if(name_idx >= 0) {
+            furi_mutex_acquire(app->mtx, FuriWaitForever);
+            json_tok_strcpy(
+                line, &tokens[name_idx], app->owner_name, sizeof(app->owner_name));
+            furi_mutex_release(app->mtx);
+            ok = true;
+        }
     }
-    /* More commands (owner, name, status) slot in here in
-     * subsequent patches. Unknown cmds fall through with ok=false. */
+    /* More commands (name, status) slot in here in subsequent
+     * patches. Unknown cmds fall through with ok=false. */
 
     ack_cmd(app, cmd, ok);
 }

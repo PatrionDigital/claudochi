@@ -195,6 +195,19 @@ typedef struct {
      * this for personalization on the idle screen / stats panel. */
     char owner_name[32];
 
+    /* Time sync — cached from `{"time":[epoch, tz_offset]}`, which
+     * the desktop sends one-shot on connect. Pair of (UTC seconds
+     * since 1970, timezone offset seconds). We stamp our local
+     * furi_get_tick() at receive so derived wall-clock can be
+     * computed any time via:
+     *   wall = time_epoch + (furi_get_tick() - time_received_tick_ms)/1000
+     *   local = wall + time_tz_offset_s
+     * Not persisted — refreshed on each reconnect. */
+    uint32_t time_epoch;
+    int32_t time_tz_offset_s;
+    uint32_t time_received_tick_ms;
+    bool time_synced;
+
     /* GUI */
     FuriMessageQueue* input_queue;
     ViewPort* view_port;
@@ -910,6 +923,23 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
     furi_mutex_acquire(app->mtx, FuriWaitForever);
 
     int v;
+
+    /* Time sync — desktop sends {"time":[epoch, tz_offset]} once on
+     * connect. Standalone object per REFERENCE.md; not a cmd, no
+     * ack required. Parse defensively — only accept a 2-element
+     * numeric array. jsmn places array elements as sequential
+     * tokens after the array token itself. */
+    int time_idx = json_find_key(line, tokens, n, "time");
+    if(time_idx >= 0 && tokens[time_idx].type == JSMN_ARRAY &&
+       tokens[time_idx].size == 2) {
+        app->time_epoch =
+            (uint32_t)json_tok_int(line, &tokens[time_idx + 1]);
+        app->time_tz_offset_s =
+            (int32_t)json_tok_int(line, &tokens[time_idx + 2]);
+        app->time_received_tick_ms = furi_get_tick();
+        app->time_synced = true;
+    }
+
     if((v = json_find_key(line, tokens, n, "total")) >= 0)
         app->hb_total = json_tok_int(line, &tokens[v]);
     if((v = json_find_key(line, tokens, n, "running")) >= 0)

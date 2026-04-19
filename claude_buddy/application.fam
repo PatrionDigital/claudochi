@@ -7,7 +7,7 @@ App(
     sources=["*.c"],
     fap_libs=["ble_profile"],
     fap_description="Anthropic Hardware Buddy bridge for Claude desktop",
-    fap_version="0.5.10",
+    fap_version="0.5.11",
     fap_category="Bluetooth",
     # Phase 2: LE Secure Connections + MITM-protected bonding. Matches the
     # pairing flow the Claude desktop Hardware Buddy window expects

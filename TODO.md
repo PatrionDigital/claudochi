@@ -26,16 +26,139 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 
 ## Animated mascot
 
-- [ ] **Character state machine** derived from heartbeat signals
-  - sleep: `total == 0` for N seconds
-  - idle: `total > 0 && running == 0`
-  - busy: `running > 0`
-  - attention: `waiting > 0` (prompt pending)
-  - celebrate: every N tokens crossed (per REFERENCE.md's "every 50K tokens")
-- [ ] **Asset pipeline**: `claude_buddy/assets/<state>/frame_NN.png` + `frame_rate`. Add `fap_icon_assets="assets"` / `fap_icon_assets_symbol="claude_buddy"` to application.fam
-- [ ] **Replace 4 Hz redraw timer** with `view_tie_icon_animation`'s per-frame hook
-  - Pattern reference: `reference/applications/main/lfrfid/views/lfrfid_view_read.c:29-109`
-- [ ] **v1 art**: one simple mascot × 5 states — aim for ~5-8 frames per state, 48×48 px, 4-8 FPS
+Shipped in v0.1:
+  - [x] Character state machine (sleep/idle/busy/attention) from heartbeat
+  - [x] Asset pipeline wired (`fap_icon_assets="assets"`, `_symbol="claude_buddy"`)
+  - [x] Static 64×64 sprite per state with contextual overlays
+
+### Phase 5d plan — animated frames
+
+Goal: replace each static `I_mascot_<state>_64x64` with a 2-6 frame
+animation that plays while that state is active. Flipper's
+`IconAnimation` API handles the timer + redraws; our draw callback
+just picks which animation is current.
+
+**Step 1 — asset pipeline conversion** (~30 min, mostly repo wrangling)
+
+Directory layout flips from flat single PNGs to one subdir per
+animation, each containing ordered frames + a frame-rate text file:
+
+```
+claude_buddy/assets/
+├── mascot_idle_64x64/
+│   ├── frame_00.png
+│   ├── frame_01.png
+│   └── frame_rate         (contains just "2")
+├── mascot_sleep_64x64/
+│   ├── frame_00.png
+│   ├── frame_01.png
+│   ├── frame_02.png
+│   ├── frame_03.png
+│   └── frame_rate         (contains "3")
+├── mascot_busy_64x64/
+│   ├── frame_00.png ... frame_03.png
+│   └── frame_rate         (contains "6")
+└── mascot_attention_64x64/
+    ├── frame_00.png
+    ├── frame_01.png
+    └── frame_rate         (contains "3")
+```
+
+Symbols become `A_mascot_<state>_64x64` (the `I_` prefix is for
+statics, `A_` for animated — ref: `reference/scripts/assets.py:138` vs
+`:179`). The Icon struct changes from `I_` to `A_`, but the
+`canvas_draw_icon_animation` call signature only takes an
+`IconAnimation*` not an `Icon*`, so we need to alloc + tie first.
+
+**Step 2 — generate frames** (~1–2 hrs, mostly art)
+
+Motion notes per state:
+
+  - **idle (2f @ 2 FPS)**. Subtle breathing: frame 0 is current base
+    pose, frame 1 is the same sprite shifted down 1 px (body-rows
+    31-55 instead of 30-54). Creates a gentle up-down bob.
+
+  - **sleep (4f @ 2 FPS)**. Zzz trail drifts upward: each frame moves
+    all three Z glyphs one row up, so they cascade out the top and
+    new ones spawn at the bottom. Body unchanged.
+
+  - **busy (4f @ 6 FPS)**. Thinking dots cycle: each frame highlights
+    one of the three dots larger than the others (0:big small small,
+    1:small big small, 2:small small big, 3:blank). Pupils also look
+    around — cycle pupil position through L/C/R/L.
+
+  - **attention (2f @ 3 FPS)**. Pulse: frame 0 = base attention
+    sprite, frame 1 = same but "!" glyph grown 1 px in each dimension
+    and pupils dilated from 1×1 to 2×2. Simulates excited pulsing.
+
+Frame counts kept small because the `heatshrink`-compressed Icon
+data is embedded in the `.fap` ELF — each extra 64×64 frame is
+~300-500 B. 12 frames total ≈ 5 KB, trivial.
+
+**Step 3 — wiring** (~30 min code)
+
+In `claude_buddy.c`:
+
+```c
+typedef struct {
+    // existing fields...
+    IconAnimation* current_anim;
+    PetState current_anim_state;  // which state the anim represents
+} ClaudeBuddyApp;
+```
+
+Helper to (re-)install the right animation when pet state changes:
+
+```c
+static const Icon* anim_for_state(PetState s) {
+    switch(s) {
+    case PetStateSleep:     return &A_mascot_sleep_64x64;
+    case PetStateBusy:      return &A_mascot_busy_64x64;
+    case PetStateAttention: return &A_mascot_attention_64x64;
+    default:                return &A_mascot_idle_64x64;
+    }
+}
+
+static void swap_anim(ClaudeBuddyApp* app, PetState s) {
+    if(s == app->current_anim_state && app->current_anim) return;
+    if(app->current_anim) {
+        icon_animation_stop(app->current_anim);
+        icon_animation_free(app->current_anim);
+    }
+    app->current_anim = icon_animation_alloc(anim_for_state(s));
+    icon_animation_start(app->current_anim);
+    app->current_anim_state = s;
+}
+```
+
+Call `swap_anim` from the spot in `handle_rx_line` / status callback
+where pet state is derived. Replace `canvas_draw_icon(canvas, 0, 0,
+pet_sprite(state))` with `canvas_draw_icon_animation(canvas, 0, 0,
+app->current_anim)`.
+
+Retire the 250 ms redraw timer — `view_tie_icon_animation(view_port,
+anim)` ties the animation's per-frame fires to viewport updates
+automatically. (Keep a minimal timer for non-animation fields like
+the BT status line refreshing.)
+
+**Step 4 — guardrails**
+
+  - Lock app->mtx during swap_anim (other threads read current_anim
+    from the draw callback)
+  - Teardown order: stop anim, free anim, then tear down view_port
+  - Verify the animation timer (FreeRTOS Timer Service task) plays
+    well with our RX drain thread (already 2 KB stack, should be fine)
+  - Watch FAP binary size — each compressed frame is small but a
+    misconfigured `frame_rate` (e.g. 60) could blow through the CPU
+    budget with heatshrink decode
+
+**Step 5 — on-device validate**, state by state (5 min)
+
+- sleep → Zzz drifting upward
+- idle → gentle bob
+- busy → dots cycling, pupils tracking
+- attention → "!" pulsing, pupils dilating
+
 - [ ] **Multi-pet support** (v2+): port the "18 pets × 7 anims" concept from the ESP32 reference. Gate on `preference` key TBD. Could be "each Flipper picks a pet at first pair, stored in furi_hal prefs"
 
 ## Tamagotchi layer

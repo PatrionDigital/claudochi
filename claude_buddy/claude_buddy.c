@@ -103,6 +103,15 @@ typedef enum {
 #define FEED_HIGH                (500u)
 #define FEED_LOW                 (200u)
 #define CLASSIFY_WINDOW_MS       (30000u)  /* msg → tool-call window */
+/* Direct tokens → feed scaling. The split-A msg-classifier only credits
+ * feed when an UNLABELED msg change is followed by tokens growth — in
+ * practice tool-heavy sessions emit "running:"/"done(...)" labels for
+ * every msg, so the classifier rarely fires and feed sits empty while
+ * play climbs (each msg change = play bump). Crediting feed directly
+ * from tokens delta covers the common case: Claude actually doing work
+ * feeds the pet, regardless of what msg says. */
+#define FEED_TOKENS_PER_UNIT     (50u)     /* 500 tokens → 10 feed */
+#define FEED_GAIN_CAP_PER_HB     (30u)     /* hard cap per heartbeat */
 #define DECAY_TICK_MS            (60000u)  /* decay once per minute */
 #define PLAY_DECAY_PER_MIN       (2u)
 #define FEED_DECAY_PER_MIN       (1u)
@@ -718,9 +727,24 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
         }
     }
 
-    /* tokens milestone (celebrate). */
+    /* tokens — drives both the celebrate-at-milestone transient AND
+     * feed credit. */
     if((v = json_find_key(line, tokens, n, "tokens")) >= 0) {
         int new_tokens = json_tok_int(line, &tokens[v]);
+
+        /* Feed bump from tokens delta. Only after baseline is set —
+         * otherwise the first heartbeat (which reports the session's
+         * lifetime total, not a delta) would feed the pet based on
+         * everything done before the app launched. Cap per heartbeat
+         * so a single giant response doesn't saturate the bar. */
+        if(app->tokens_baseline_set && new_tokens > app->hb_tokens) {
+            uint32_t delta = (uint32_t)(new_tokens - app->hb_tokens);
+            uint32_t gain = delta / FEED_TOKENS_PER_UNIT;
+            if(gain > FEED_GAIN_CAP_PER_HB) gain = FEED_GAIN_CAP_PER_HB;
+            app->feed_level += gain;
+            clamp_level(&app->feed_level);
+        }
+
         if(!app->tokens_baseline_set && new_tokens > 0) {
             /* First sighting — snap milestone so we don't fire
              * immediately for pre-existing tokens at app start. */

@@ -119,6 +119,13 @@ typedef enum {
  * signal; it earns its own step up. 10 approvals from empty → above
  * FEED_HIGH (500). Denials give zero — no feed for "no". */
 #define FEED_PER_APPROVAL        (50u)
+/* Cap the credit a single classified msg change can add to play or
+ * feed. Without this, raw byte-count crediting made the Happy bar
+ * fill in ~5 messages — longer user prompts (100+ bytes each) blew
+ * past PLAY_HIGH before the pet registered any meaningful playtime.
+ * With the cap, a 10-byte "ok" still contributes less than a 15-byte
+ * thoughtful reply, but a 200-byte paragraph doesn't spike the bar. */
+#define MSG_CLASSIFY_CAP         (15u)
 #define DECAY_TICK_MS            (60000u)  /* decay once per minute */
 #define PLAY_DECAY_PER_MIN       (2u)
 #define FEED_DECAY_PER_MIN       (1u)
@@ -431,11 +438,13 @@ static void clamp_level(uint32_t* lvl) {
 static void gotchi_classify_pending(ClaudeBuddyApp* app) {
     if(!app->pending_msg_ts) return;
     int tokens_delta = app->hb_tokens - app->pending_start_tokens;
+    uint32_t credit = app->pending_msg_bytes;
+    if(credit > MSG_CLASSIFY_CAP) credit = MSG_CLASSIFY_CAP;
     if(tokens_delta > 0) {
-        app->feed_level += app->pending_msg_bytes;
+        app->feed_level += credit;
         clamp_level(&app->feed_level);
     } else {
-        app->play_level += app->pending_msg_bytes;
+        app->play_level += credit;
         clamp_level(&app->play_level);
     }
     app->pending_msg_ts = 0;

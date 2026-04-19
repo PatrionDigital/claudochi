@@ -845,16 +845,17 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         uint32_t ffill = (app->feed_level * (bw - 2)) / LEVEL_MAX;
         if(ffill > 0) canvas_draw_box(canvas, bx + 1, 38, (int)ffill, bh - 2);
 
-        /* Age readout. Short format — "T:42" fits in ~20 px. */
-        char age_line[16];
-        snprintf(age_line, sizeof(age_line), "T:%lu",
-                 (unsigned long)app->age_transactions);
-        canvas_draw_str(canvas, 66, 52, age_line);
-
+        /* Age readout. Combines with "..." typing indicator on the same
+         * line so they don't collide in the 62-px column. */
         uint32_t now = furi_get_tick();
-        if(app->last_activity_ms && now - app->last_activity_ms < 2000u) {
-            canvas_draw_str(canvas, 94, 52, "...");
-        }
+        bool typing = app->last_activity_ms && now - app->last_activity_ms < 2000u;
+        char age_line[20];
+        snprintf(
+            age_line,
+            sizeof(age_line),
+            typing ? "Age:%lu ..." : "Age:%lu",
+            (unsigned long)app->age_transactions);
+        canvas_draw_str(canvas, 66, 52, age_line);
     }
 
     /* Power overlays: upper-right 8x8 corner.

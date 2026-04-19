@@ -73,7 +73,19 @@ typedef enum {
     PetStateFocused,      /* feed high, play low — quietly at work */
     PetStateLonely,       /* both low, sustained */
     PetStateStarving,     /* feed == 0 for extended period */
+    PetStateCount,
 } PetState;
+
+/* Life stages. age_transactions drives which sprite set we use for
+ * a given PetState (Phase 5g evolution). */
+typedef enum {
+    EvoEgg = 0,   /* ages 0..9, no limbs, peek-a-boo through crack */
+    EvoChild,     /* ages 10..49, current baseline boxy mascot */
+    EvoTeen,      /* ages 50..199, taller with hair tuft */
+    EvoAdult,     /* ages 200..999, fuller with belt detail */
+    EvoElder,     /* ages 1000+, wizard hat + evolved form */
+    EvoCount,
+} PetEvoStage;
 
 #define TOKENS_MILESTONE         (10000u)
 #define HEART_TRIGGER_MS         (5000u)
@@ -157,9 +169,11 @@ typedef struct {
     NotificationApp* notifications;
 
     /* Currently-playing mascot animation. Swapped by ensure_anim()
-     * when the derived pet state changes. Guarded by app->mtx. */
+     * when the derived pet state OR life stage changes. Guarded by
+     * app->mtx. */
     IconAnimation* current_anim;
     PetState anim_state;
+    PetEvoStage anim_stage;
 
     /* Tokens milestone tracking — celebrate when `tokens` jumps past
      * the next 10k mark. last_celebrated seeded on first heartbeat so
@@ -527,26 +541,48 @@ static void gotchi_tick(ClaudeBuddyApp* app) {
     }
 }
 
-/* Map a pet state to its animated icon asset. Called by ensure_anim()
- * whenever the derived state changes; not called in the draw path. */
-static const Icon* anim_icon_for_state(PetState s) {
-    switch(s) {
-    case PetStateSleep: return &A_mascot_sleep_64x64;
-    case PetStateBusy: return &A_mascot_busy_64x64;
-    case PetStateOverloaded: return &A_mascot_overloaded_64x64;
-    case PetStateAttention: return &A_mascot_attention_64x64;
-    case PetStateHeart: return &A_mascot_heart_64x64;
-    case PetStateCelebrate: return &A_mascot_celebrate_64x64;
-    case PetStateReconnecting: return &A_mascot_reconnecting_64x64;
-    case PetStateHappy: return &A_mascot_happy_64x64;
-    case PetStateGrumpy: return &A_mascot_grumpy_64x64;
-    case PetStateContent: return &A_mascot_content_64x64;
-    case PetStateFocused: return &A_mascot_focused_64x64;
-    case PetStateLonely: return &A_mascot_lonely_64x64;
-    case PetStateStarving: return &A_mascot_starving_64x64;
-    case PetStateIdle: /* fall through */
-    default: return &A_mascot_idle_64x64;
+/* Stage-keyed dispatch table: [evo stage][pet state] → Icon*. Loaded
+ * in ensure_anim when the derived (stage, state) pair changes. */
+#define ICONS_FOR_STAGE(stage) { \
+    [PetStateSleep]        = &A_mascot_##stage##_sleep_64x64, \
+    [PetStateIdle]         = &A_mascot_##stage##_idle_64x64, \
+    [PetStateBusy]         = &A_mascot_##stage##_busy_64x64, \
+    [PetStateOverloaded]   = &A_mascot_##stage##_overloaded_64x64, \
+    [PetStateAttention]    = &A_mascot_##stage##_attention_64x64, \
+    [PetStateHeart]        = &A_mascot_##stage##_heart_64x64, \
+    [PetStateCelebrate]    = &A_mascot_##stage##_celebrate_64x64, \
+    [PetStateReconnecting] = &A_mascot_##stage##_reconnecting_64x64, \
+    [PetStateHappy]        = &A_mascot_##stage##_happy_64x64, \
+    [PetStateGrumpy]       = &A_mascot_##stage##_grumpy_64x64, \
+    [PetStateContent]      = &A_mascot_##stage##_content_64x64, \
+    [PetStateFocused]      = &A_mascot_##stage##_focused_64x64, \
+    [PetStateLonely]       = &A_mascot_##stage##_lonely_64x64, \
+    [PetStateStarving]     = &A_mascot_##stage##_starving_64x64, \
+}
+
+static const Icon* const mascot_icons[EvoCount][PetStateCount] = {
+    [EvoEgg]   = ICONS_FOR_STAGE(egg),
+    [EvoChild] = ICONS_FOR_STAGE(child),
+    [EvoTeen]  = ICONS_FOR_STAGE(teen),
+    [EvoAdult] = ICONS_FOR_STAGE(adult),
+    [EvoElder] = ICONS_FOR_STAGE(elder),
+};
+#undef ICONS_FOR_STAGE
+
+static PetEvoStage evo_stage_from_age(uint32_t age) {
+    if(age >= 1000u) return EvoElder;
+    if(age >= 200u) return EvoAdult;
+    if(age >= 50u) return EvoTeen;
+    if(age >= 10u) return EvoChild;
+    return EvoEgg;
+}
+
+static const Icon* anim_icon_for_state(PetState s, PetEvoStage e) {
+    if((unsigned)s >= PetStateCount || (unsigned)e >= EvoCount) {
+        return &A_mascot_child_idle_64x64;
     }
+    const Icon* i = mascot_icons[e][s];
+    return i ? i : &A_mascot_child_idle_64x64;
 }
 
 /* IconAnimation's internal timer fires this callback on each frame
@@ -559,18 +595,21 @@ static void anim_update_cb(IconAnimation* instance, void* ctx) {
     view_port_update(app->view_port);
 }
 
-/* Swap to the animation for the given state if it's not already
- * active. Must be called with app->mtx held. */
+/* Swap to the animation for the given (state, stage) pair if it's
+ * not already active. Must be called with app->mtx held. Swaps fire
+ * when either axis changes — pet state OR life stage transition. */
 static void ensure_anim(ClaudeBuddyApp* app, PetState s) {
-    if(app->current_anim && app->anim_state == s) return;
+    PetEvoStage stage = evo_stage_from_age(app->age_transactions);
+    if(app->current_anim && app->anim_state == s && app->anim_stage == stage) return;
     if(app->current_anim) {
         icon_animation_stop(app->current_anim);
         icon_animation_free(app->current_anim);
     }
-    app->current_anim = icon_animation_alloc(anim_icon_for_state(s));
+    app->current_anim = icon_animation_alloc(anim_icon_for_state(s, stage));
     icon_animation_set_update_callback(app->current_anim, anim_update_cb, app);
     icon_animation_start(app->current_anim);
     app->anim_state = s;
+    app->anim_stage = stage;
 }
 
 /* ============================================================

@@ -826,24 +826,23 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         }
     } else {
         /* No known label → Claudegotchi panel:
-         *   H (Happy): play_level / LEVEL_MAX
-         *   F (Food):  feed_level / LEVEL_MAX
-         *   T: age (transactions) — raw number
-         *   "typing" flash when a recent unrecognized msg arrived
-         * Bars fill positively (high = good, not the classic Tamagotchi
-         * inverse-need convention). */
-        canvas_set_font(canvas, FontSecondary);
-
+         *   ♥ (heart glyph):  play_level / LEVEL_MAX
+         *   🥣 (bowl glyph):  feed_level / LEVEL_MAX
+         *   Age:N — raw age (transactions count)
+         *   "..." flash when a recent unrecognized msg arrived
+         * Bars fill positively (high = good). */
         const int bx = 74, bw = 52, bh = 5;
-        canvas_draw_str(canvas, 66, 30, "H");
+        canvas_draw_icon(canvas, 66, 23, &I_icon_heart_8x8);
         canvas_draw_frame(canvas, bx, 25, bw, bh);
         uint32_t pfill = (app->play_level * (bw - 2)) / LEVEL_MAX;
         if(pfill > 0) canvas_draw_box(canvas, bx + 1, 26, (int)pfill, bh - 2);
 
-        canvas_draw_str(canvas, 66, 42, "F");
+        canvas_draw_icon(canvas, 66, 35, &I_icon_bowl_8x8);
         canvas_draw_frame(canvas, bx, 37, bw, bh);
         uint32_t ffill = (app->feed_level * (bw - 2)) / LEVEL_MAX;
         if(ffill > 0) canvas_draw_box(canvas, bx + 1, 38, (int)ffill, bh - 2);
+
+        canvas_set_font(canvas, FontSecondary);
 
         /* Age readout. Combines with "..." typing indicator on the same
          * line so they don't collide in the 62-px column. */

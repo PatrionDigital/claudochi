@@ -419,10 +419,12 @@ static void gotchi_classify_pending(ClaudeBuddyApp* app) {
     app->pending_msg_ts = 0;
     app->pending_msg_bytes = 0;
 
-    /* Age bump. Each classified interaction is one life experience. */
+    /* Age bump. Each classified interaction is one life experience.
+     * Milestone celebrate fires at each evolution boundary — the
+     * transition is already visible (new sprite set), the
+     * double-length Celebrate adds a bit of fanfare. */
     uint32_t age = ++app->age_transactions;
-    if(age == 10u || age == 50u || age == 200u || age == 1000u) {
-        /* Double-length Celebrate for milestone feel. */
+    if(age == 10u || age == 100u || age == 1000u || age == 3000u) {
         set_transient(app, PetStateCelebrate, CELEBRATE_LINGER_MS * 2u);
     }
 }
@@ -569,10 +571,16 @@ static const Icon* const mascot_icons[EvoCount][PetStateCount] = {
 };
 #undef ICONS_FOR_STAGE
 
+/* Evolution thresholds calibrated for ~100 Claude Code messages/day:
+ *   Egg → Child    after ~10 interactions (first hour of use)
+ *   Child → Teen   after ~100 (first day)
+ *   Teen → Adult   after ~1,000 (first ~10 days)
+ *   Adult → Elder  after ~3,000 (first month)
+ * Milestone celebrates fire on each transition. */
 static PetEvoStage evo_stage_from_age(uint32_t age) {
-    if(age >= 1000u) return EvoElder;
-    if(age >= 200u) return EvoAdult;
-    if(age >= 50u) return EvoTeen;
+    if(age >= 3000u) return EvoElder;
+    if(age >= 1000u) return EvoAdult;
+    if(age >= 100u) return EvoTeen;
     if(age >= 10u) return EvoChild;
     return EvoEgg;
 }

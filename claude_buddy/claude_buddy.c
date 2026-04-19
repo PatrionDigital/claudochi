@@ -141,6 +141,14 @@ typedef struct {
      * We deliberately don't reset on subsequent states so repeated
      * reconnects keep triggering. */
     bool was_connected;
+
+    /* Claudegotchi substrate — unrecognized msg arrivals (user typing,
+     * narrative text, anything that doesn't match summarize_msg's
+     * status ladder) feed into these counters. We don't render the
+     * content; just acknowledge the activity with a pulsing "…"
+     * indicator and accumulate for Phase 5e play/feed mechanics. */
+    uint32_t last_activity_ms;
+    uint32_t interaction_bytes;
 } ClaudeBuddyApp;
 
 /* Forward so callbacks can reference the struct. */
@@ -348,8 +356,25 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
         app->hb_running = json_tok_int(line, &tokens[v]);
     if((v = json_find_key(line, tokens, n, "waiting")) >= 0)
         app->hb_waiting = json_tok_int(line, &tokens[v]);
-    if((v = json_find_key(line, tokens, n, "msg")) >= 0)
+    if((v = json_find_key(line, tokens, n, "msg")) >= 0) {
+        char prev_msg[sizeof(app->hb_msg)];
+        strlcpy(prev_msg, app->hb_msg, sizeof(prev_msg));
         json_tok_strcpy(line, &tokens[v], app->hb_msg, sizeof(app->hb_msg));
+
+        /* Classify the new msg. Unmatched patterns are treated as
+         * Claudegotchi-food: don't display, but stamp activity and
+         * accrue interaction_bytes. Only count on actual change to
+         * avoid double-counting when the desktop re-sends the same
+         * msg on its 10s keepalive. */
+        if(app->hb_msg[0] && strcmp(prev_msg, app->hb_msg) != 0) {
+            ClaudeBuddyMsgSummary probe;
+            summarize_msg(app->hb_msg, &probe);
+            if(probe.label[0] == '\0') {
+                app->last_activity_ms = furi_get_tick();
+                app->interaction_bytes += (uint32_t)strlen(app->hb_msg);
+            }
+        }
+    }
 
     /* tokens milestone (celebrate). */
     if((v = json_find_key(line, tokens, n, "tokens")) >= 0) {
@@ -460,21 +485,25 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     canvas_clear(canvas);
 
     if(mode == ClaudeBuddyModePrompt) {
-        /* Prompt modal: attention mascot (animated) on the left, tool /
-         * hint / keybindings stacked in the right 64 px. */
+        /* Prompt modal: attention mascot on the left, stripped-down
+         * decision surface on the right.
+         *   - "Allow?" (secondary, small, top)
+         *   - Tool name in FontPrimary (bigger — "Bash", "Read", etc.)
+         *   - OK/Left keybindings at the bottom
+         * The full hint/command gets truncated awkwardly at this screen
+         * width, so we drop it here — the user can glance at their Mac
+         * for the full command if they need to. */
         if(app->current_anim) {
             canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
         }
 
-        canvas_set_font(canvas, FontPrimary);
+        canvas_set_font(canvas, FontSecondary);
         canvas_draw_str(canvas, 66, 10, "Allow?");
 
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 66, 32, app->prompt_tool);
+
         canvas_set_font(canvas, FontSecondary);
-        char line[32];
-        snprintf(line, sizeof(line), "%s", app->prompt_tool);
-        canvas_draw_str(canvas, 66, 22, line);
-        strlcpy(line, app->prompt_hint, sizeof(line));
-        canvas_draw_str(canvas, 66, 34, line);
         canvas_draw_str(canvas, 66, 52, "OK:yes");
         canvas_draw_str(canvas, 66, 62, "L:deny");
 
@@ -507,10 +536,10 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
 
     /* Summarized msg: only recognized status patterns render. Free-form
      * text (including what the user is typing into Claude Code) is
-     * deliberately NOT shown — the mascot's state carries that info,
-     * and bare user input on a pocket-sized screen isn't great for
-     * privacy. Unmatched msgs instead feed into interaction counters
-     * elsewhere (Phase 5e — Claudegotchi play/feed loop). */
+     * deliberately NOT shown — bare user input on a pocket-sized screen
+     * is a privacy leak. When an unrecognized msg recently arrived,
+     * show a pulsing "…" instead to acknowledge "something's happening"
+     * without surfacing the content. */
     ClaudeBuddyMsgSummary sum;
     summarize_msg(app->hb_msg, &sum);
     if(sum.label[0]) {
@@ -520,9 +549,15 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 66, 50, sum.detail);
         }
+    } else {
+        /* No known label — fall through to activity indicator if
+         * an unrecognized msg arrived recently. */
+        uint32_t now = furi_get_tick();
+        if(app->last_activity_ms && now - app->last_activity_ms < 2000u) {
+            canvas_set_font(canvas, FontPrimary);
+            canvas_draw_str(canvas, 66, 42, "...");
+        }
     }
-    /* Unrecognized patterns: render nothing. The mascot animation is
-     * the signal. */
 
     /* Power overlays: upper-right 8x8 corner.
      *   - Charging (USB plugged in): lightning bolt

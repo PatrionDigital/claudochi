@@ -147,6 +147,63 @@ static void
     dst[len] = '\0';
 }
 
+/* Summarize a free-form heartbeat `msg` string into a short label
+ * (≤ 5 chars) plus an optional detail word. The desktop's msg field is
+ * "one-line summary suitable for a small display" per REFERENCE.md, but
+ * in practice still too long for 64 px of right-column font-secondary.
+ * Common observed patterns:
+ *     "running: yarn test"      → RUN / yarn
+ *     "approve: Bash"           → ASK / Bash
+ *     "called bash"             → RUN / bash
+ *     "done(success), 1 turns"  → DONE
+ *     "done(failure), …"        → FAIL
+ *     "approved"                → OK
+ *     <anything else>           → raw msg in detail, no label
+ * Extend the ladder here as new desktop patterns surface. */
+typedef struct {
+    char label[8];    /* 1-5 char summary, rendered in FontPrimary */
+    char detail[24];  /* optional trailing word(s), FontSecondary */
+} ClaudeBuddyMsgSummary;
+
+static void copy_first_word(const char* src, char* dst, size_t dst_size) {
+    while(*src == ' ') src++;
+    size_t n = 0;
+    while(*src && *src != ' ' && n < dst_size - 1) {
+        dst[n++] = *src++;
+    }
+    dst[n] = '\0';
+}
+
+static void summarize_msg(const char* raw, ClaudeBuddyMsgSummary* s) {
+    s->label[0] = '\0';
+    s->detail[0] = '\0';
+    if(!raw || !raw[0]) return;
+
+    if(strncmp(raw, "running:", 8) == 0) {
+        strlcpy(s->label, "RUN", sizeof(s->label));
+        copy_first_word(raw + 8, s->detail, sizeof(s->detail));
+    } else if(strncmp(raw, "approve:", 8) == 0) {
+        strlcpy(s->label, "ASK", sizeof(s->label));
+        copy_first_word(raw + 8, s->detail, sizeof(s->detail));
+    } else if(strncmp(raw, "called ", 7) == 0) {
+        strlcpy(s->label, "RUN", sizeof(s->label));
+        copy_first_word(raw + 7, s->detail, sizeof(s->detail));
+    } else if(strncmp(raw, "done(success", 12) == 0) {
+        strlcpy(s->label, "DONE", sizeof(s->label));
+    } else if(
+        strncmp(raw, "done(failure", 12) == 0 || strncmp(raw, "done(error", 10) == 0 ||
+        strncmp(raw, "failed", 6) == 0) {
+        strlcpy(s->label, "FAIL", sizeof(s->label));
+    } else if(strcmp(raw, "approved") == 0) {
+        strlcpy(s->label, "OK", sizeof(s->label));
+    } else if(strcmp(raw, "denied") == 0) {
+        strlcpy(s->label, "NO", sizeof(s->label));
+    } else {
+        /* Unknown pattern — show the raw text truncated, no label. */
+        strlcpy(s->detail, raw, sizeof(s->detail));
+    }
+}
+
 /* Derive pet visible state from the live fields. Call under app->mtx
  * (reads multiple fields; caller must hold the lock). */
 static PetState pet_state_from_app(
@@ -344,8 +401,23 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     canvas_draw_str(canvas, 66, 14, "Claude");
     canvas_draw_str(canvas, 66, 28, "Buddy");
 
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 66, 56, app->hb_msg[0] ? app->hb_msg : "(waiting)");
+    /* Summarized msg:
+     *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)
+     *   detail word underneath in FontSecondary
+     * Unknown/free-form falls back to raw msg in FontSecondary, no label. */
+    ClaudeBuddyMsgSummary sum;
+    summarize_msg(app->hb_msg, &sum);
+    if(sum.label[0]) {
+        canvas_set_font(canvas, FontPrimary);
+        canvas_draw_str(canvas, 66, 50, sum.label);
+        if(sum.detail[0]) {
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 66, 61, sum.detail);
+        }
+    } else {
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 66, 56, sum.detail[0] ? sum.detail : "(waiting)");
+    }
 
     furi_mutex_release(app->mtx);
 }

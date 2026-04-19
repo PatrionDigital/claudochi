@@ -95,6 +95,10 @@ typedef enum {
 /* Full-screen evolution cinematic duration. 12 frames @ 4 FPS = 3s
  * anim; give a tiny margin so the last frame renders before teardown. */
 #define EVOLUTION_LINGER_MS      (3200u)
+/* "Claudochi used X!" narration box stays up this long after an OK
+ * confirm before the modal fully closes. Pokemon-game dramatic
+ * pause. Input is swallowed during the phase. */
+#define NARRATION_LINGER_MS      (1500u)
 #define HAPPY_STREAK             (3)
 #define GRUMPY_STREAK            (2)
 #define LOW_BATTERY_PCT          (20)
@@ -177,6 +181,12 @@ typedef struct {
      * selects DENY. Reset to 0 on each new prompt. Only `once` and
      * `deny` are valid decisions per REFERENCE.md. */
     uint8_t prompt_cursor_col;
+    /* Narration phase — plays after OK, outlives heartbeat
+     * prompt-clear. When narration_until_ms > now, the modal shows
+     * "Claudochi used X!" instead of the action grid, and all input
+     * is swallowed so the text box can't be interrupted. */
+    uint32_t narration_until_ms;
+    char narration_decision[16]; /* "once" | "deny" */
 
     /* GUI */
     FuriMessageQueue* input_queue;
@@ -1001,17 +1011,22 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         app->evolve_until_ms = 0;
     }
 
-    if(mode == ClaudeBuddyModePrompt) {
+    uint32_t now_ms = furi_get_tick();
+    bool in_narration = app->narration_until_ms > now_ms;
+
+    if(mode == ClaudeBuddyModePrompt || in_narration) {
         /* Pokemon-style battle modal:
          *   y=0..10   banner    "Wild <tool> appeared!"
          *   y=11      divider
          *   y=12..46  combat    "?" glyph (left) + 32×32 pet (right)
          *   y=47      divider
-         *   y=48..63  actions   1-row × 2-col grid, ONCE | DENY with cursor
+         *   y=48..63  actions   1-row × 2-col grid OR narration text
          *
          * Only ONCE + DENY are rendered because REFERENCE.md lists
          * only those as valid decisions. Left/Right moves cursor,
-         * OK confirms. Up/Down have no effect (single-row). */
+         * OK confirms. Up/Down have no effect (single-row). After
+         * OK, narration replaces the action row for NARRATION_LINGER_MS
+         * before the modal closes. */
 
         /* Banner */
         canvas_set_font(canvas, FontSecondary);
@@ -1028,18 +1043,32 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
 
         canvas_draw_line(canvas, 0, 47, 127, 47);
 
-        /* Action row — ONCE | DENY with vertical divider + cursor. */
-        canvas_draw_line(canvas, 63, 48, 63, 63);
-        canvas_set_font(canvas, FontSecondary);
-        static const char* const LABELS[2] = {"ONCE", "DENY"};
-        const int cell_xs[2] = {2, 66};
-        const int label_xs[2] = {10, 74};
-        const int by = 60;
-        for(int c = 0; c < 2; c++) {
-            if(c == app->prompt_cursor_col) {
-                canvas_draw_str(canvas, cell_xs[c], by, ">");
+        if(in_narration) {
+            /* Narration replaces the grid: "Claudochi used X!" in two
+             * lines because "APPROVE!"/"DENY!" in FontPrimary takes
+             * enough horizontal space that a one-line "Claudochi used
+             * DENY!" overruns 128 px. */
+            canvas_set_font(canvas, FontSecondary);
+            canvas_draw_str(canvas, 16, 55, "Claudochi used");
+            canvas_set_font(canvas, FontPrimary);
+            const char* used = "???";
+            if(strcmp(app->narration_decision, "once") == 0) used = "APPROVE!";
+            else if(strcmp(app->narration_decision, "deny") == 0) used = "DENY!";
+            canvas_draw_str(canvas, 40, 63, used);
+        } else {
+            /* Action row — ONCE | DENY with vertical divider + cursor. */
+            canvas_draw_line(canvas, 63, 48, 63, 63);
+            canvas_set_font(canvas, FontSecondary);
+            static const char* const LABELS[2] = {"ONCE", "DENY"};
+            const int cell_xs[2] = {2, 66};
+            const int label_xs[2] = {10, 74};
+            const int by = 60;
+            for(int c = 0; c < 2; c++) {
+                if(c == app->prompt_cursor_col) {
+                    canvas_draw_str(canvas, cell_xs[c], by, ">");
+                }
+                canvas_draw_str(canvas, label_xs[c], by, LABELS[c]);
             }
-            canvas_draw_str(canvas, label_xs[c], by, LABELS[c]);
         }
 
         furi_mutex_release(app->mtx);
@@ -1251,6 +1280,15 @@ int32_t claude_buddy_app(void* p) {
         ClaudeBuddyMode mode = app->mode;
         char id[48];
         strlcpy(id, app->prompt_id, sizeof(id));
+        bool narration_active = app->narration_until_ms > furi_get_tick();
+
+        /* Narration phase swallows all input — Pokemon-game feel:
+         * text box plays out to completion. Back still exits (handled
+         * above this block). */
+        if(narration_active) {
+            furi_mutex_release(app->mtx);
+            continue;
+        }
 
         /* Konami-code reset — Up Up Down Down Left Right Left Right.
          * Only when NOT in a prompt (so Left in prompt mode still
@@ -1335,6 +1373,13 @@ int32_t claude_buddy_app(void* p) {
         furi_mutex_acquire(app->mtx, FuriWaitForever);
         app->mode = ClaudeBuddyModeNormal;
         app->prompt_id[0] = '\0';
+        /* Kick off the narration phase — modal stays visible showing
+         * "Claudochi used X!" for NARRATION_LINGER_MS even though
+         * mode already flipped to Normal. Draw path gates on
+         * narration_until_ms in addition to mode == Prompt. */
+        uint32_t now = furi_get_tick();
+        strlcpy(app->narration_decision, decision, sizeof(app->narration_decision));
+        app->narration_until_ms = now + NARRATION_LINGER_MS;
         snprintf(
             app->hb_msg,
             sizeof(app->hb_msg),
@@ -1342,7 +1387,6 @@ int32_t claude_buddy_app(void* p) {
             decision,
             tx_ok ? "ok" : "fail");
 
-        uint32_t now = furi_get_tick();
         /* Approval = anything but deny. Derived from the decision
          * string because OK now confirms whichever cell the cursor
          * is on, not just ONCE. */

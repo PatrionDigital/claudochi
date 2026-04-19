@@ -406,11 +406,12 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
-    /* Title: "Claudebuddy" in FontPrimary. Lowercase 'b' is narrower
-     * than capital 'B' in the haxrcorp proportional font, buying us
-     * ~1 px vs "ClaudeBuddy" which previously clipped the final 'y'. */
+    /* Title "Claude" in FontPrimary — the brand mark at the biggest
+     * readable size that fits. "ClaudeBuddy" and "Claudebuddy" both
+     * clipped the final letter at 62 px of column width; 6 chars
+     * leaves slack. The mascot itself provides the "Buddy" signal. */
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 66, 12, "Claudebuddy");
+    canvas_draw_str(canvas, 66, 12, "Claude");
 
     /* Summarized msg centered in the freed vertical space:
      *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)

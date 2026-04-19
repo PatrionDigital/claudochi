@@ -4,12 +4,40 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 
 ## Shipped (v0.x)
 
+### v0.1 — BLE + prompts + mascot
 - [x] BLE profile: advertising, LE Secure Connections + MITM-bonded pairing, 6-digit passkey overlay
 - [x] NUS GATT: RX (write + write-without-resp), TX (notify) characteristics, full end-to-end with Claude Desktop
 - [x] Heartbeat parse (jsmn), msg + counters rendered live
 - [x] Prompt modal with hardware approve/deny — validated on real Claude Code Desktop
 - [x] Blue LED on connected, vibro buzz on modal open
 - [x] Teardown restores stock Serial profile
+- [x] FAP icon (10x10 mascot silhouette)
+- [x] Character state machine (sleep/idle/busy/attention) from heartbeat
+- [x] Asset pipeline wired (`fap_icon_assets="assets"`, `_symbol="claude_buddy"`)
+- [x] Static 64×64 sprite per state with contextual overlays
+- [x] Summarize `msg` to a short label + detail (RUN/ASK/DONE/FAIL/OK/NO)
+- [x] Reconnecting transient on BT drop
+- [x] Stop rendering free-form msg text (privacy)
+
+### v0.2 — animated mascot + 6 new states
+- [x] Phase 5d animated frames (2-6 per state)
+- [x] Phase 5e.1 Claudegotchi play/feed mechanics (split-A classifier)
+- [x] Phase 5e.2 SD persistence + age + H/F bars + T age readout
+- [x] Phase 5f: 6 new mascot states (heart/celebrate/reconnecting/happy/grumpy/overloaded) + overlay icons + backlight-on-prompt
+- [x] Phase 5g: 5 life stages × 14 states = 70 animations
+- [x] Evolution thresholds calibrated (~1 month of 100msgs/day to Elder)
+
+### v0.3 — Claudochi polish + feed tuning
+- [x] Repo renamed raderado → claudochi (device-agnostic branding)
+- [x] Title "Claude" → "Claudochi"
+- [x] 10x10 heart + hamburger glyphs in two-row stat layout
+- [x] Konami code reset (Up Up Down Down Left Right Left Right) with freeze fix
+- [x] v0.3.1: tokens-delta → feed direct path (fixes feed-always-empty on tool sessions)
+- [x] Phase 5h: egg-crack progression within Egg stage (ages 4-9)
+- [x] v0.3.3: approvals feed the pet (+50 per OK)
+- [x] v0.3.4: cap per-msg play/feed at 15 (happy bar no longer maxes in 5 msgs)
+- [x] v0.3.5: retune tokens→feed rate for real session pace
+- [x] GitHub release tagged, repo public, .fap attached as asset
 
 ## Now
 
@@ -17,19 +45,10 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 
 ## Next up — low-hanging polish
 
-- [ ] **FAP icon** (~15 min). 10x10 1-bit PNG, add `fap_icon="claude_buddy_10px.png"` to application.fam. Stylized silhouette of the Claude Code mascot creature (the terracotta boxy robot character — see reference image in commit history or `docs/mascot_reference.png` if saved).
-  - Source: research confirms format at `reference/scripts/fbt/elfmanifest.py:56-63`
-- [ ] **Summarize `msg` to ≤2 words for display**. Current heartbeat `msg` field is "running: yarn test" / "approve: Bash" / free-form text from the desktop. Truncates awkwardly on the 128-px Flipper screen. Map to short tokens — e.g. "RUN", "WAIT", "DONE", "ASK" — either by local string matching, or by asking the desktop for a short form (Phase 5 protocol ask)
-- [ ] **Tag v0.1 release** on GitHub
-- [ ] **README rewrite** — current one has speculative troubleshooting from the debugging thrash. Replace with the actual validated flow + screenshots of the Flipper UI in each state
-- [ ] **Show "reconnecting..." on Flipper when BT drops** instead of silently falling back to "Advertising"
+- [ ] **README rewrite** — current README has some speculative troubleshooting from the debugging thrash. Replace with the validated flow + screenshots of the Flipper UI in each state (incl. all 5 life stages)
+- [ ] **Richer `summarize_msg` ladder** — observe real desktop msg strings during a session (FURI_LOG on unlabeled msgs), extend pattern list so age-bump rate reflects only meaningful interactions, not every streaming status the desktop sends
 
-## Animated mascot
-
-Shipped in v0.1:
-  - [x] Character state machine (sleep/idle/busy/attention) from heartbeat
-  - [x] Asset pipeline wired (`fap_icon_assets="assets"`, `_symbol="claude_buddy"`)
-  - [x] Static 64×64 sprite per state with contextual overlays
+## Animated mascot — historical Phase 5d plan (shipped)
 
 ### Phase 5d plan — animated frames
 

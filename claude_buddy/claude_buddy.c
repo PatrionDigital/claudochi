@@ -237,10 +237,16 @@ typedef struct {
     /* Autosave: periodically flush state to SD so an unplanned exit
      * doesn't lose progress. Milestones also trigger an immediate save. */
     uint32_t last_save_ms;
+
+    /* Konami-code reset: tracks how many correct keys of the sequence
+     * have been pressed in order. On full match, resets the pet. */
+    uint8_t konami_progress;
 } ClaudeBuddyApp;
 
 /* Forward so callbacks can reference the struct. */
 static void ensure_anim(ClaudeBuddyApp* app, PetState s);
+/* claudegotchi_reset calls persist_save before its definition below. */
+static void persist_save(ClaudeBuddyApp* app);
 
 /* ============================================================
  *  JSON helpers — small wrappers on jsmn
@@ -432,6 +438,55 @@ static void gotchi_classify_pending(ClaudeBuddyApp* app) {
 /* =======================================================================
  *  Persistence — /ext/apps_data/claude_buddy/state.bin
  * ======================================================================= */
+
+/* Konami-code sequence for hard reset. Up Up Down Down Left Right Left
+ * Right — classic minus the B A Start (Flipper d-pad has no B/A). */
+static const InputKey KONAMI_CODE[] = {
+    InputKeyUp, InputKeyUp, InputKeyDown, InputKeyDown,
+    InputKeyLeft, InputKeyRight, InputKeyLeft, InputKeyRight,
+};
+#define KONAMI_LEN (sizeof(KONAMI_CODE) / sizeof(KONAMI_CODE[0]))
+
+/* Zero all persistable stats back to a fresh-pet state. Must hold mtx.
+ *
+ * Deliberately does NOT perform I/O (persist_save), notification
+ * sequences, or ensure_anim here. An earlier version called all three
+ * inline; that froze the device — notification_message on
+ * sequence_double_vibro blocks ~400 ms while the buzzer plays,
+ * storage_file_open on SD can take 50-200 ms, and icon_animation_start
+ * touches the FreeRTOS timer-service queue. All three under the same
+ * mutex held by the input task racing against the draw/BT/RX paths was
+ * enough to stall everything.
+ *
+ * The caller flushes to SD and fires notifications AFTER releasing
+ * mtx. The next draw tick (≤ 250 ms) re-runs ensure_anim with the
+ * freshly-zeroed age, which naturally swaps in the egg sprite. */
+static void claudegotchi_reset(ClaudeBuddyApp* app) {
+    app->play_level = 0;
+    app->feed_level = 0;
+    app->age_transactions = 0;
+    app->total_approvals = 0;
+    app->total_denials = 0;
+    app->interaction_bytes = 0;
+    app->approval_streak = 0;
+    app->denial_streak = 0;
+    app->pending_msg_ts = 0;
+    app->pending_msg_bytes = 0;
+    app->pending_start_tokens = 0;
+    app->last_activity_ms = 0;
+    app->lonely_since_ms = 0;
+    app->starving_since_ms = 0;
+    app->last_decay_ms = 0;
+    app->tokens_baseline_set = false;
+    app->last_celebrated_tokens = 0;
+    app->transient_state = PetStateSleep;
+    app->transient_until_ms = 0;
+    app->konami_progress = 0;
+    /* Clear msg so the bars/age panel renders on the next draw —
+     * otherwise a sticky status label ("RUN yarn" etc) would hide the
+     * reset confirmation until the desktop sends a new heartbeat. */
+    app->hb_msg[0] = '\0';
+}
 
 static void persist_save(ClaudeBuddyApp* app) {
     Storage* storage = furi_record_open(RECORD_STORAGE);
@@ -810,12 +865,13 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
-    /* Title "Claude" in FontPrimary — the brand mark at the biggest
-     * readable size that fits. "ClaudeBuddy" and "Claudebuddy" both
-     * clipped the final letter at 62 px of column width; 6 chars
-     * leaves slack. The mascot itself provides the "Buddy" signal. */
+    /* Title "Claudochi" in FontPrimary — Tamagotchi-ified brand mark.
+     * Flipper's default fonts are ASCII-only (haxrcorp_4089_tr,
+     * helvB08_tr), so Japanese くろどっち can't render without a custom
+     * font; romanized "Claudochi" carries the same tamagotchi flavor
+     * and fits the 62 px column where "Claudebuddy" clipped. */
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 66, 12, "Claude");
+    canvas_draw_str(canvas, 66, 12, "Claudochi");
 
     /* Summarized msg: only recognized status patterns render. Free-form
      * text (including what the user is typing into Claude Code) is
@@ -833,27 +889,27 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 66, 50, sum.detail);
         }
     } else {
-        /* No known label → Claudegotchi panel:
-         *   ♥ (heart glyph):  play_level / LEVEL_MAX
-         *   🥣 (bowl glyph):  feed_level / LEVEL_MAX
-         *   Age:N — raw age (transactions count)
-         *   "..." flash when a recent unrecognized msg arrived
+        /* No known label → Claudegotchi panel, two-row per stat:
+         *   row A: [10x10 glyph] Label text
+         *   row B: gauge bar full-width
+         * Stacked for Happy then Food, with Age on the last row.
          * Bars fill positively (high = good). */
-        const int bx = 74, bw = 52, bh = 5;
-        canvas_draw_icon(canvas, 66, 23, &I_icon_heart_8x8);
+        const int bx = 66, bw = 60, bh = 5;
+
+        canvas_draw_icon(canvas, 66, 13, &I_icon_heart_10x10);
+        canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 80, 22, "Happy");
         canvas_draw_frame(canvas, bx, 25, bw, bh);
         uint32_t pfill = (app->play_level * (bw - 2)) / LEVEL_MAX;
         if(pfill > 0) canvas_draw_box(canvas, bx + 1, 26, (int)pfill, bh - 2);
 
-        canvas_draw_icon(canvas, 66, 35, &I_icon_drumstick_8x8);
-        canvas_draw_frame(canvas, bx, 37, bw, bh);
+        canvas_draw_icon(canvas, 66, 33, &I_icon_burger_10x10);
+        canvas_draw_str(canvas, 80, 42, "Food");
+        canvas_draw_frame(canvas, bx, 45, bw, bh);
         uint32_t ffill = (app->feed_level * (bw - 2)) / LEVEL_MAX;
-        if(ffill > 0) canvas_draw_box(canvas, bx + 1, 38, (int)ffill, bh - 2);
+        if(ffill > 0) canvas_draw_box(canvas, bx + 1, 46, (int)ffill, bh - 2);
 
-        canvas_set_font(canvas, FontSecondary);
-
-        /* Age readout. Combines with "..." typing indicator on the same
-         * line so they don't collide in the 62-px column. */
+        /* Age readout on the last row + typing dots inline. */
         uint32_t now = furi_get_tick();
         bool typing = app->last_activity_ms && now - app->last_activity_ms < 2000u;
         char age_line[20];
@@ -862,7 +918,7 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
             sizeof(age_line),
             typing ? "Age:%lu ..." : "Age:%lu",
             (unsigned long)app->age_transactions);
-        canvas_draw_str(canvas, 66, 52, age_line);
+        canvas_draw_str(canvas, 66, 60, age_line);
     }
 
     /* Power overlays: upper-right 8x8 corner.
@@ -1000,7 +1056,41 @@ int32_t claude_buddy_app(void* p) {
         ClaudeBuddyMode mode = app->mode;
         char id[48];
         strlcpy(id, app->prompt_id, sizeof(id));
+
+        /* Konami-code reset — Up Up Down Down Left Right Left Right.
+         * Only when NOT in a prompt (so Left in prompt mode still
+         * means deny, not just konami progress). Running match;
+         * any non-matching key that's also not the start resets. */
+        bool konami_fired = false;
+        if(mode != ClaudeBuddyModePrompt) {
+            if(event.key == KONAMI_CODE[app->konami_progress]) {
+                app->konami_progress++;
+                if(app->konami_progress >= KONAMI_LEN) {
+                    claudegotchi_reset(app);
+                    konami_fired = true;
+                }
+            } else {
+                app->konami_progress = (event.key == KONAMI_CODE[0]) ? 1 : 0;
+            }
+        }
+
         furi_mutex_release(app->mtx);
+
+        /* Reset side-effects fire outside the mutex — see the
+         * comment above claudegotchi_reset for why. persist_save
+         * touches Storage (can block on SD), double_vibro blocks on
+         * the buzzer sequence, and backlight_on kicks the display
+         * awake for visual confirmation. All three are safe to call
+         * without the app mutex because claudegotchi_reset already
+         * settled the in-memory state. */
+        if(konami_fired) {
+            persist_save(app);
+            if(app->notifications) {
+                notification_message(app->notifications, &sequence_double_vibro);
+                notification_message(app->notifications, &sequence_display_backlight_on);
+            }
+            view_port_update(app->view_port);
+        }
 
         if(mode != ClaudeBuddyModePrompt) continue;
         if(id[0] == '\0') continue;

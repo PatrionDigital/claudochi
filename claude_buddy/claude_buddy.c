@@ -684,12 +684,30 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
             canvas_draw_str(canvas, 66, 50, sum.detail);
         }
     } else {
-        /* No known label — fall through to activity indicator if
-         * an unrecognized msg arrived recently. */
+        /* No known label → show Claudegotchi play/feed bars plus a
+         * recent-activity ping. Lets the user see the levels climb +
+         * decay over time. Bars are 52 px wide (fills cleanly in the
+         * right column), 5 px tall; labels "P" / "F" sit to the left
+         * of each bar. */
+        canvas_set_font(canvas, FontSecondary);
+
+        const int bx = 74, bw = 52, bh = 5;
+        canvas_draw_str(canvas, 66, 30, "P");
+        canvas_draw_frame(canvas, bx, 25, bw, bh);
+        uint32_t pfill = (app->play_level * (bw - 2)) / LEVEL_MAX;
+        if(pfill > 0) canvas_draw_box(canvas, bx + 1, 26, (int)pfill, bh - 2);
+
+        canvas_draw_str(canvas, 66, 42, "F");
+        canvas_draw_frame(canvas, bx, 37, bw, bh);
+        uint32_t ffill = (app->feed_level * (bw - 2)) / LEVEL_MAX;
+        if(ffill > 0) canvas_draw_box(canvas, bx + 1, 38, (int)ffill, bh - 2);
+
+        /* Activity ping at the bottom when an unrecognized msg just
+         * arrived — the bars only move on classification (30s window
+         * or tokens growth), so this gives immediate feedback. */
         uint32_t now = furi_get_tick();
         if(app->last_activity_ms && now - app->last_activity_ms < 2000u) {
-            canvas_set_font(canvas, FontPrimary);
-            canvas_draw_str(canvas, 66, 42, "...");
+            canvas_draw_str(canvas, 66, 60, "typing");
         }
     }
 

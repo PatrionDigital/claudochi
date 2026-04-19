@@ -810,6 +810,64 @@ static void draw_mascot(Canvas* canvas, ClaudeBuddyApp* app) {
 }
 
 /* ============================================================
+ *  Command + event dispatch
+ * ============================================================ */
+
+/* TX an ack for a received command. Per REFERENCE.md, every
+ * cmd-typed object the desktop sends expects a matching reply:
+ *   {"ack":"<same as cmd>","ok":true|false}
+ * We keep it short — no "n" counter (spec calls that optional,
+ * used only for things like chunked-transfer byte accounting). */
+static void ack_cmd(ClaudeBuddyApp* app, const char* cmd, bool ok) {
+    if(!app->profile) return;
+    char buf[80];
+    int len = snprintf(
+        buf,
+        sizeof(buf),
+        "{\"ack\":\"%s\",\"ok\":%s}\n",
+        cmd,
+        ok ? "true" : "false");
+    if(len > 0 && (size_t)len < sizeof(buf)) {
+        claude_buddy_profile_tx(
+            app->profile, (const uint8_t*)buf, (uint16_t)len);
+    }
+}
+
+/* Handle a desktop-issued command. Keep this self-contained so
+ * additions slot in as more `else if` branches without expanding
+ * handle_rx_line's body. Called from handle_rx_line when a "cmd"
+ * field is present in the parsed JSON line — remaining field
+ * processing is skipped for command objects. */
+static void handle_cmd(
+    ClaudeBuddyApp* app,
+    const char* line,
+    const jsmntok_t* tokens,
+    int n,
+    int cmd_idx) {
+    UNUSED(n);
+    char cmd[16];
+    json_tok_strcpy(line, &tokens[cmd_idx], cmd, sizeof(cmd));
+
+    bool ok = false;
+    if(strcmp(cmd, "unpair") == 0) {
+        /* Desktop's "Forget" button — erase our stored BLE bonds so
+         * the next pairing runs clean. bt_forget_bonded_devices
+         * posts a message to the BT service queue; safe to call
+         * without our app mutex. The central will drop shortly
+         * after; our BT status callback picks it up and swaps the
+         * mascot to sleep/reconnecting. */
+        if(app->bt) {
+            bt_forget_bonded_devices(app->bt);
+            ok = true;
+        }
+    }
+    /* More commands (owner, name, status) slot in here in
+     * subsequent patches. Unknown cmds fall through with ok=false. */
+
+    ack_cmd(app, cmd, ok);
+}
+
+/* ============================================================
  *  Heartbeat ingest
  * ============================================================ */
 
@@ -819,6 +877,15 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
     jsmn_init(&parser);
     int n = jsmn_parse(&parser, line, line_len, tokens, MAX_TOKENS);
     if(n < 1 || tokens[0].type != JSMN_OBJECT) return;
+
+    /* Command objects (have a "cmd" field) are handled + acked,
+     * then we return. Heartbeat snapshots don't have `cmd`, so
+     * normal execution continues for them. */
+    int cmd_idx = json_find_key(line, tokens, n, "cmd");
+    if(cmd_idx >= 0) {
+        handle_cmd(app, line, tokens, n, cmd_idx);
+        return;
+    }
 
     furi_mutex_acquire(app->mtx, FuriWaitForever);
 

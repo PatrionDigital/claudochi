@@ -505,10 +505,12 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str(canvas, 66, 12, "Claude");
 
-    /* Summarized msg centered in the freed vertical space:
-     *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)
-     *   detail word in FontSecondary underneath
-     * Unknown/free-form falls back to raw msg in FontSecondary, no label. */
+    /* Summarized msg: only recognized status patterns render. Free-form
+     * text (including what the user is typing into Claude Code) is
+     * deliberately NOT shown — the mascot's state carries that info,
+     * and bare user input on a pocket-sized screen isn't great for
+     * privacy. Unmatched msgs instead feed into interaction counters
+     * elsewhere (Phase 5e — Claudegotchi play/feed loop). */
     ClaudeBuddyMsgSummary sum;
     summarize_msg(app->hb_msg, &sum);
     if(sum.label[0]) {
@@ -518,10 +520,9 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
             canvas_set_font(canvas, FontSecondary);
             canvas_draw_str(canvas, 66, 50, sum.detail);
         }
-    } else {
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 66, 42, sum.detail[0] ? sum.detail : "(waiting)");
     }
+    /* Unrecognized patterns: render nothing. The mascot animation is
+     * the signal. */
 
     /* Power overlays: upper-right 8x8 corner.
      *   - Charging (USB plugged in): lightning bolt

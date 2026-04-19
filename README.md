@@ -1,10 +1,10 @@
-# raderado
+# claudochi
 
 Flipper Zero app that turns the device into an Anthropic **Hardware Buddy** —
 a tiny hardware companion for Claude Code Desktop. Pair it with the host's
 Developer menu, and the Flipper shows live session state, fires a vibrating
 modal when Claude asks for permission, and lets you approve or deny with a
-physical button.
+physical button. Feeds a lightweight tamagotchi layer along the way.
 
 Built as a pure userland FAP (`FlipperAppType.EXTERNAL`) against the
 [Unleashed](https://github.com/DarkFlippers/unleashed-firmware) firmware —
@@ -14,7 +14,9 @@ Protocol spec: [anthropics/claude-desktop-buddy REFERENCE.md](https://github.com
 
 ## What works (v0.1)
 
-- Advertises as **Claude Raderado**
+- Advertises as **Claude &lt;device-name&gt;** — pulls from your Flipper's
+  Device Name setting (Settings → System → Device Name). Fresh Flippers
+  use a preset (e.g. Nibblet); if you renamed yours, that's what shows.
 - LE Secure Connections bonded pairing — 6-digit passkey auto-rendered by the
   Flipper's built-in pin-code overlay
 - Nordic UART Service with RX (write) and TX (notify) characteristics at the
@@ -60,8 +62,8 @@ pipx install ufbt
 ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release
 
 # Clone this repo
-git clone https://github.com/PatrionDigital/raderado.git
-cd raderado
+git clone https://github.com/PatrionDigital/claudochi.git
+cd claudochi
 ```
 
 ## Build and install
@@ -95,7 +97,7 @@ Launch from the Flipper: **Apps → Bluetooth → Claude Buddy**.
 3. **Help → Troubleshooting → Enable Developer Mode**. Fully quit (cmd+Q)
    and relaunch so the Developer menu registers.
 4. **Developer → Open Hardware Buddy…**
-5. Click **Connect**. Pick `Claude Raderado` from the scan list.
+5. Click **Connect**. Pick `Claude <your-device-name>` from the scan list.
 6. macOS/Windows shows a system-level pairing prompt. The Flipper's screen
    overlays a 6-digit passkey; type it into the host prompt.
 7. Done. Flipper BT line flips to `Connected`, blue LED on, mascot starts
@@ -128,7 +130,7 @@ Launch from the Flipper: **Apps → Bluetooth → Claude Buddy**.
 ## Project layout
 
 ```
-raderado/
+claudochi/
 ├── claude_buddy/
 │   ├── application.fam                 # FAP manifest, icon + assets wired
 │   ├── icons/claude_buddy_10px.png     # Apps-menu icon (10×10 1-bit)

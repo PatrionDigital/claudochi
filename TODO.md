@@ -1,4 +1,4 @@
-# raderado — project backlog
+# claudochi — project backlog
 
 Loose prioritization. Top groups are in rough "most likely next" order; mark items with a priority tag when we decide (P0/P1/P2) so the Now section stays honest.
 

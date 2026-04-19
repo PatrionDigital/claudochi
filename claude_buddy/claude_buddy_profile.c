@@ -288,15 +288,27 @@ static void claude_buddy_profile_get_gap_config(GapConfig* cfg, FuriHalBleProfil
 
     /* adv_name construction mirrors hid_profile.c:420 exactly — the only
      * change is substituting "Claude" for "Control". That profile
-     * advertises successfully as e.g. "Control Raderado" and is visible
-     * in macOS Bluetooth settings, so we follow its pattern 1:1 rather
-     * than recombine fragments from other sources:
+     * advertises successfully as e.g. "Control <device_name>" and is
+     * visible in macOS Bluetooth settings, so we follow its pattern
+     * 1:1 rather than recombine fragments from other sources.
+     *
+     * The visible adv name is "Claude " + furi_hal_version_get_name_ptr()
+     * — so each Flipper shows up as "Claude <its own device name>".
+     * Claude Desktop's Hardware Buddy picker filters by the "claude"
+     * prefix (case-insensitive), which matches regardless of device
+     * name.
      *
      *   - First byte of adv_name is 0x09 (AD_TYPE_COMPLETE_LOCAL_NAME),
      *     copied from furi_hal_version_get_ble_local_device_name_ptr()[0]
      *     which furi_hal_version.c:106 explicitly initializes to
      *     AD_TYPE_COMPLETE_LOCAL_NAME.
-     *   - Format "%c%s %s" with space separator, matching HID. */
+     *   - Format "%c%s %s" with space separator, matching HID.
+     *
+     * Note: the rendered device name comes from the Flipper's own
+     * "Device Name" setting (Settings → System → Device Name), not
+     * from this code. The stock default is a preset list; power
+     * users rename theirs. "Claude" is the only fixed substring we
+     * contribute to the adv packet. */
     snprintf(
         cfg->adv_name,
         FURI_HAL_VERSION_DEVICE_NAME_LENGTH,

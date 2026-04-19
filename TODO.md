@@ -55,6 +55,21 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 
 *(nothing actively in progress)*
 
+## Next session — brainstorm queue
+
+Items flagged for a dedicated design conversation before code. Each has rough
+scope notes inline below in the main sections, but come here as a checklist so
+the session opens with a clear menu:
+
+- [ ] **Richer `summarize_msg` ladder** — observe real desktop msg strings,
+      extend the label list so age-bump rate reflects only meaningful
+      interactions (see "Next up — low-hanging polish")
+- [ ] **Stats panel** — second view on Up/Down, shows total tokens,
+      tokens_today, session count, uptime, lifetime approvals/denials
+      (see "Medium features")
+- [ ] **BLE signal strength indicator** — RSSI read via GAP, 1-4 bar icon in
+      corner (see "Medium features")
+
 ## Next up — low-hanging polish
 
 - [ ] **README rewrite** — current README has stale "BT: Advertising/Connected" references and pre-Pokemon-modal flow. Replace with validated flow + screenshots of the five life stages and the battle modal.

@@ -92,6 +92,9 @@ typedef enum {
 #define HEART_LINGER_MS          (5000u)
 #define CELEBRATE_LINGER_MS      (5000u)
 #define RECONNECTING_LINGER_MS   (8000u)
+/* Full-screen evolution cinematic duration. 12 frames @ 4 FPS = 3s
+ * anim; give a tiny margin so the last frame renders before teardown. */
+#define EVOLUTION_LINGER_MS      (3200u)
 #define HAPPY_STREAK             (3)
 #define GRUMPY_STREAK            (2)
 #define LOW_BATTERY_PCT          (20)
@@ -197,6 +200,17 @@ typedef struct {
     IconAnimation* current_anim;
     PetState anim_state;
     PetEvoStage anim_stage;
+    /* First call to ensure_anim shouldn't treat the startup state as
+     * a stage transition. This flips to true at the end of the first
+     * call so subsequent stage changes (age crossing 10/100/1000/3000)
+     * correctly fire the evolution cinematic. */
+    bool anim_initialized;
+
+    /* Full-screen evolution animation — plays briefly when the pet
+     * crosses a stage boundary. Allocated on transition, freed when
+     * the timer expires. NULL during normal operation. */
+    IconAnimation* evolve_anim;
+    uint32_t evolve_until_ms;
 
     /* Tokens milestone tracking — celebrate when `tokens` jumps past
      * the next 10k mark. last_celebrated seeded on first heartbeat so
@@ -685,10 +699,34 @@ static void anim_update_cb(IconAnimation* instance, void* ctx) {
 
 /* Swap to the animation for the given (state, stage) pair if it's
  * not already active. Must be called with app->mtx held. Swaps fire
- * when either axis changes — pet state OR life stage transition. */
+ * when either axis changes — pet state OR life stage transition.
+ *
+ * Also detects FORWARD life-stage transitions (Egg→Child→Teen→...)
+ * and kicks off the full-screen evolution cinematic. Backward moves
+ * (e.g. Konami reset from Teen to Egg) deliberately don't trigger —
+ * reset shouldn't celebrate regression. The evolve anim is allocated
+ * here; the draw callback renders it full-screen and tears it down
+ * when EVOLUTION_LINGER_MS expires. */
 static void ensure_anim(ClaudeBuddyApp* app, PetState s) {
     PetEvoStage stage = evo_stage_from_age(app->age_transactions);
-    if(app->current_anim && app->anim_state == s && app->anim_stage == stage) return;
+
+    /* Forward stage transition → fire evolution cinematic. Guarded
+     * by anim_initialized so the first ensure_anim call after
+     * startup / persist_load doesn't trigger on whatever stage the
+     * saved age restored to. */
+    if(app->anim_initialized && stage > app->anim_stage && !app->evolve_anim) {
+        app->evolve_anim = icon_animation_alloc(&A_mascot_evolution_128x64);
+        if(app->evolve_anim) {
+            icon_animation_set_update_callback(app->evolve_anim, anim_update_cb, app);
+            icon_animation_start(app->evolve_anim);
+            app->evolve_until_ms = furi_get_tick() + EVOLUTION_LINGER_MS;
+        }
+    }
+
+    if(app->current_anim && app->anim_state == s && app->anim_stage == stage) {
+        app->anim_initialized = true;
+        return;
+    }
     if(app->current_anim) {
         icon_animation_stop(app->current_anim);
         icon_animation_free(app->current_anim);
@@ -698,6 +736,7 @@ static void ensure_anim(ClaudeBuddyApp* app, PetState s) {
     icon_animation_start(app->current_anim);
     app->anim_state = s;
     app->anim_stage = stage;
+    app->anim_initialized = true;
 }
 
 /* Egg-crack progression within EvoEgg. Age < 10 keeps us in the Egg
@@ -898,6 +937,27 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     int t = app->hb_total, r = app->hb_running, w = app->hb_waiting;
 
     canvas_clear(canvas);
+
+    /* Evolution cinematic takes over the whole canvas when a stage
+     * transition is in flight. Runs for EVOLUTION_LINGER_MS, then
+     * tears down the animation and falls through to normal
+     * rendering (which now shows the NEW stage sprite). Modal
+     * prompts that arrive during the cinematic queue implicitly —
+     * the prompt state is set in heartbeat parsing, and the next
+     * draw after the cinematic ends will flip into prompt mode. */
+    if(app->evolve_anim) {
+        uint32_t now = furi_get_tick();
+        if(now < app->evolve_until_ms) {
+            canvas_draw_icon_animation(canvas, 0, 0, app->evolve_anim);
+            furi_mutex_release(app->mtx);
+            return;
+        }
+        /* Expired — teardown so normal rendering resumes next. */
+        icon_animation_stop(app->evolve_anim);
+        icon_animation_free(app->evolve_anim);
+        app->evolve_anim = NULL;
+        app->evolve_until_ms = 0;
+    }
 
     if(mode == ClaudeBuddyModePrompt) {
         /* Prompt modal: attention mascot on the left, stripped-down
@@ -1257,6 +1317,12 @@ int32_t claude_buddy_app(void* p) {
     if(app->current_anim) {
         icon_animation_stop(app->current_anim);
         icon_animation_free(app->current_anim);
+    }
+    /* Evolution cinematic may still be in flight on teardown (user
+     * hit Back mid-animation). Same timer-service race applies. */
+    if(app->evolve_anim) {
+        icon_animation_stop(app->evolve_anim);
+        icon_animation_free(app->evolve_anim);
     }
 
     furi_stream_buffer_free(app->rx_stream);

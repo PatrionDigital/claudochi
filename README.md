@@ -123,17 +123,28 @@ and drop it into `SD Card/apps/Bluetooth/` via qFlipper. Launch from
 ## Build from source
 
 ```sh
-# Install ufbt and pin the SDK channel to Unleashed
+# Install ufbt
 pipx install ufbt
-ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release
 
-# Clone and build
+# Clone the repo
 git clone https://github.com/PatrionDigital/claudochi.git
-cd claudochi/claude_buddy
+cd claudochi
+
+# Pin the Unleashed SDK to the exact version this project is known to
+# build against. `scripts/sdk-pin.sh` locks to a specific zip URL with
+# SHA256 verification — avoids breakage if a future release changes API.
+./scripts/sdk-pin.sh
+
+# Build + launch
+cd claude_buddy
 ufbt launch    # builds + uploads + launches in one step
 ```
 
 Build output lands at `claude_buddy/dist/claude_buddy.fap`.
+
+> **Note**: `sdk-pin.sh` pins the SDK at the project level. To bump
+> when a new Unleashed release arrives, follow the instructions at
+> the top of that script.
 
 ## Pairing flow
 

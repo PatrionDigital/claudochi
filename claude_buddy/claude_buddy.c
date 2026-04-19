@@ -113,8 +113,8 @@ typedef enum {
  * play climbs (each msg change = play bump). Crediting feed directly
  * from tokens delta covers the common case: Claude actually doing work
  * feeds the pet, regardless of what msg says. */
-#define FEED_TOKENS_PER_UNIT     (15u)     /* 150 tokens → 10 feed */
-#define FEED_GAIN_CAP_PER_HB     (60u)     /* hard cap per heartbeat */
+#define FEED_TOKENS_PER_UNIT     (8u)      /* 80 tokens → 10 feed */
+#define FEED_GAIN_CAP_PER_HB     (100u)    /* hard cap per heartbeat */
 /* Explicit approvals feed the pet — each "yes, go do this tool" is a
  * deliberate user intent to spend compute, which thematically = food.
  * Larger than a typical single-heartbeat tokens credit (cap 30/hb)
@@ -828,9 +828,28 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
         if(app->tokens_baseline_set && new_tokens > app->hb_tokens) {
             uint32_t delta = (uint32_t)(new_tokens - app->hb_tokens);
             uint32_t gain = delta / FEED_TOKENS_PER_UNIT;
-            if(gain > FEED_GAIN_CAP_PER_HB) gain = FEED_GAIN_CAP_PER_HB;
+            bool capped = false;
+            if(gain > FEED_GAIN_CAP_PER_HB) {
+                gain = FEED_GAIN_CAP_PER_HB;
+                capped = true;
+            }
             app->feed_level += gain;
             clamp_level(&app->feed_level);
+            /* Debug log visible via `ufbt cli` — lets us correlate
+             * token bursts to feed bar movement without opening the
+             * device. Grep for "DBG hb". */
+            FURI_LOG_I(
+                TAG,
+                "DBG hb tok_delta=%lu gain=%lu%s feed=%lu/1000 play=%lu/1000 "
+                "age=%lu running=%d waiting=%d",
+                (unsigned long)delta,
+                (unsigned long)gain,
+                capped ? "(cap)" : "",
+                (unsigned long)app->feed_level,
+                (unsigned long)app->play_level,
+                (unsigned long)app->age_transactions,
+                app->hb_running,
+                app->hb_waiting);
         }
 
         if(!app->tokens_baseline_set && new_tokens > 0) {

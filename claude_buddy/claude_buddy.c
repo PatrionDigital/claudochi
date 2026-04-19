@@ -749,6 +749,14 @@ static void ensure_anim(ClaudeBuddyApp* app, PetState s) {
             icon_animation_set_update_callback(app->evolve_anim, anim_update_cb, app);
             icon_animation_start(app->evolve_anim);
             app->evolve_until_ms = furi_get_tick() + EVOLUTION_LINGER_MS;
+            /* Wake the backlight so the user doesn't miss the
+             * cinematic if they've stepped away. Single-message
+             * sequence (no delay phases), safe to call with the
+             * app mutex held per Flipper's notification service. */
+            if(app->notifications) {
+                notification_message(
+                    app->notifications, &sequence_display_backlight_on);
+            }
         }
     }
 

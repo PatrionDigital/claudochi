@@ -112,6 +112,13 @@ typedef enum {
  * feeds the pet, regardless of what msg says. */
 #define FEED_TOKENS_PER_UNIT     (50u)     /* 500 tokens → 10 feed */
 #define FEED_GAIN_CAP_PER_HB     (30u)     /* hard cap per heartbeat */
+/* Explicit approvals feed the pet — each "yes, go do this tool" is a
+ * deliberate user intent to spend compute, which thematically = food.
+ * Larger than a typical single-heartbeat tokens credit (cap 30/hb)
+ * because an approval is a discrete user decision, not a continuous
+ * signal; it earns its own step up. 10 approvals from empty → above
+ * FEED_HIGH (500). Denials give zero — no feed for "no". */
+#define FEED_PER_APPROVAL        (50u)
 #define DECAY_TICK_MS            (60000u)  /* decay once per minute */
 #define PLAY_DECAY_PER_MIN       (2u)
 #define FEED_DECAY_PER_MIN       (1u)
@@ -1189,6 +1196,12 @@ int32_t claude_buddy_app(void* p) {
             app->approval_streak++;
             app->denial_streak = 0;
             app->total_approvals++;
+            /* Approval feeds the pet — explicit intent to run the
+             * tool = food. Separate from tokens-delta feed so the
+             * user sees immediate response to their decision,
+             * independent of how big the resulting tool run is. */
+            app->feed_level += FEED_PER_APPROVAL;
+            clamp_level(&app->feed_level);
             /* Heart if approval happened within 5s of the prompt arriving. */
             if(app->prompt_shown_at_ms &&
                now - app->prompt_shown_at_ms < HEART_TRIGGER_MS) {

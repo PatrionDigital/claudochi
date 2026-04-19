@@ -406,10 +406,11 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
-    /* Title in secondary font, one line — tried "ClaudeBuddy" in
-     * FontPrimary but it clipped the final "y" at the screen edge. */
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 66, 10, "Claude Buddy");
+    /* Title: "Claudebuddy" in FontPrimary. Lowercase 'b' is narrower
+     * than capital 'B' in the haxrcorp proportional font, buying us
+     * ~1 px vs "ClaudeBuddy" which previously clipped the final 'y'. */
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 66, 12, "Claudebuddy");
 
     /* Summarized msg centered in the freed vertical space:
      *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)

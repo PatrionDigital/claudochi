@@ -208,6 +208,15 @@ typedef struct {
     uint32_t time_received_tick_ms;
     bool time_synced;
 
+    /* Turn event counter — incremented on each `{"evt":"turn",...}`
+     * message from the desktop (fires once per completed turn per
+     * REFERENCE.md). We deliberately don't trigger a transient per
+     * turn — heavy sessions emit many turn events, a celebrate
+     * every one would be noisy. Counter is available for future UI
+     * (stats panel) or smarter triggers (e.g. celebrate only on
+     * "big" turns measured by content length or token growth). */
+    uint32_t turn_event_count;
+
     /* GUI */
     FuriMessageQueue* input_queue;
     ViewPort* view_port;
@@ -917,6 +926,23 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
     int cmd_idx = json_find_key(line, tokens, n, "cmd");
     if(cmd_idx >= 0) {
         handle_cmd(app, line, tokens, n, cmd_idx);
+        return;
+    }
+
+    /* Event objects ({"evt":"turn", ...}) also fall outside
+     * heartbeat processing. We currently only count turn events;
+     * future smarter triggers (celebrate on "big" turns) would
+     * inspect the content array more deeply than jsmn's flat token
+     * scan makes convenient. */
+    int evt_idx = json_find_key(line, tokens, n, "evt");
+    if(evt_idx >= 0) {
+        char evt[16];
+        json_tok_strcpy(line, &tokens[evt_idx], evt, sizeof(evt));
+        if(strcmp(evt, "turn") == 0) {
+            furi_mutex_acquire(app->mtx, FuriWaitForever);
+            app->turn_event_count++;
+            furi_mutex_release(app->mtx);
+        }
         return;
     }
 

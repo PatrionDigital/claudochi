@@ -1,0 +1,42 @@
+# Verify the FAP builds cleanly on every push and PR. Uses the same
+# pinned SDK via scripts/sdk-pin.sh that local dev does, so CI and dev
+# stay in sync.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ufbt
+        run: pipx install ufbt
+
+      - name: Pin Unleashed SDK
+        run: ./scripts/sdk-pin.sh
+
+      - name: Build FAP
+        working-directory: claude_buddy
+        run: ufbt
+
+      - name: Upload FAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude_buddy.fap
+          path: claude_buddy/dist/claude_buddy.fap
+          retention-days: 14

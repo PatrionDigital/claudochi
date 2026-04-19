@@ -1,0 +1,59 @@
+# Auto-release on tag push. Builds the FAP against the pinned SDK
+# and attaches it to the GitHub release for the tag. The release
+# body is the tag's annotation message — keep tag messages
+# release-note-ready via `git tag -a vX.Y.Z -m "vX.Y.Z — summary"`.
+#
+# To cut a release:
+#   git tag -a v0.X.Y -m "v0.X.Y — summary"
+#   git push origin v0.X.Y
+# Workflow picks it up, builds, creates/updates the release, attaches the FAP.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need tag annotation for release body
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ufbt
+        run: pipx install ufbt
+
+      - name: Pin Unleashed SDK
+        run: ./scripts/sdk-pin.sh
+
+      - name: Build FAP
+        working-directory: claude_buddy
+        run: ufbt
+
+      - name: Extract tag annotation for release body
+        id: tag_body
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          BODY=$(git tag -l --format='%(contents)' "$TAG_NAME")
+          {
+            echo 'body<<EOF'
+            echo "$BODY"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create / update GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: claude_buddy/dist/claude_buddy.fap
+          body: ${{ steps.tag_body.outputs.body }}
+          fail_on_unmatched_files: true

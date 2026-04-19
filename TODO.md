@@ -48,6 +48,33 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 - [ ] **README rewrite** — current README has some speculative troubleshooting from the debugging thrash. Replace with the validated flow + screenshots of the Flipper UI in each state (incl. all 5 life stages)
 - [ ] **Richer `summarize_msg` ladder** — observe real desktop msg strings during a session (FURI_LOG on unlabeled msgs), extend pattern list so age-bump rate reflects only meaningful interactions, not every streaming status the desktop sends
 
+## Medium features
+
+- [ ] **Full-screen evolution animation**. When `evo_stage_from_age()`
+      crosses a boundary (Egg→Child at 10, Child→Teen at 100,
+      Teen→Adult at 1000, Adult→Elder at 3000), take over the whole
+      128×64 canvas for a 2-5 second metamorphosis cinematic before
+      the new stage sprite settles in. Today the transition is just a
+      Celebrate transient (doubled linger) + silent sprite swap —
+      nowhere near milestone-worthy.
+      
+      Sketch:
+        - New `ClaudeBuddyModeEvolving` mode. Set on stage-boundary
+          detection in `ensure_anim`; clear on anim completion.
+        - Draw callback: if mode==Evolving, paint a full-width frame
+          sequence (zooming/cocoon effect?) centered on canvas,
+          suppressing the usual mascot + right column.
+        - Assets: either one generic 128×64 metamorphosis anim that
+          fades between old-stage and new-stage silhouettes, or four
+          bespoke transition anims. Start generic, go bespoke later
+          if the art budget allows.
+        - Input handling: block button input during evolve or let
+          BACK abort (and settle into the new stage anyway). Modal
+          prompts that arrive mid-evolve queue until the anim
+          finishes (prompt can't be lost since it keeps re-sending).
+        - Duration ~3s feels right: long enough to celebrate,
+          short enough not to miss a prompt.
+
 ## Animated mascot — historical Phase 5d plan (shipped)
 
 ### Phase 5d plan — animated frames

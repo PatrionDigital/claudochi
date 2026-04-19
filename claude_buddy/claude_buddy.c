@@ -406,12 +406,10 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
-    /* Title: single-word "ClaudeBuddy" in primary font. Borderline fit
-     * in the 62-px right column (proportional font, ~5-6 px avg char
-     * width × 11 chars). If it overflows we'd drop back to secondary
-     * "Claude Buddy" from the previous layout. */
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 66, 12, "ClaudeBuddy");
+    /* Title in secondary font, one line — tried "ClaudeBuddy" in
+     * FontPrimary but it clipped the final "y" at the screen edge. */
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 66, 10, "Claude Buddy");
 
     /* Summarized msg centered in the freed vertical space:
      *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)

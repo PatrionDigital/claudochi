@@ -179,29 +179,38 @@ static void summarize_msg(const char* raw, ClaudeBuddyMsgSummary* s) {
     s->detail[0] = '\0';
     if(!raw || !raw[0]) return;
 
-    if(strncmp(raw, "running:", 8) == 0) {
+    /* Desktop sometimes wraps msg in parens, e.g. "(called Bash)".
+     * Strip a leading "(" so pattern matching works uniformly. */
+    const char* p = raw;
+    if(*p == '(') p++;
+
+    if(strncmp(p, "running:", 8) == 0) {
         strlcpy(s->label, "RUN", sizeof(s->label));
-        copy_first_word(raw + 8, s->detail, sizeof(s->detail));
-    } else if(strncmp(raw, "approve:", 8) == 0) {
+        copy_first_word(p + 8, s->detail, sizeof(s->detail));
+    } else if(strncmp(p, "approve:", 8) == 0) {
         strlcpy(s->label, "ASK", sizeof(s->label));
-        copy_first_word(raw + 8, s->detail, sizeof(s->detail));
-    } else if(strncmp(raw, "called ", 7) == 0) {
+        copy_first_word(p + 8, s->detail, sizeof(s->detail));
+    } else if(strncmp(p, "called ", 7) == 0) {
         strlcpy(s->label, "RUN", sizeof(s->label));
-        copy_first_word(raw + 7, s->detail, sizeof(s->detail));
-    } else if(strncmp(raw, "done(success", 12) == 0) {
+        copy_first_word(p + 7, s->detail, sizeof(s->detail));
+    } else if(strncmp(p, "done(success", 12) == 0) {
         strlcpy(s->label, "DONE", sizeof(s->label));
     } else if(
-        strncmp(raw, "done(failure", 12) == 0 || strncmp(raw, "done(error", 10) == 0 ||
-        strncmp(raw, "failed", 6) == 0) {
+        strncmp(p, "done(failure", 12) == 0 || strncmp(p, "done(error", 10) == 0 ||
+        strncmp(p, "failed", 6) == 0) {
         strlcpy(s->label, "FAIL", sizeof(s->label));
-    } else if(strcmp(raw, "approved") == 0) {
+    } else if(strcmp(p, "approved") == 0) {
         strlcpy(s->label, "OK", sizeof(s->label));
-    } else if(strcmp(raw, "denied") == 0) {
+    } else if(strcmp(p, "denied") == 0) {
         strlcpy(s->label, "NO", sizeof(s->label));
     } else {
         /* Unknown pattern — show the raw text truncated, no label. */
         strlcpy(s->detail, raw, sizeof(s->detail));
     }
+
+    /* Trim a trailing ")" that the paren-wrap leaves behind in detail. */
+    size_t n = strlen(s->detail);
+    if(n > 0 && s->detail[n - 1] == ')') s->detail[n - 1] = '\0';
 }
 
 /* Derive pet visible state from the live fields. Call under app->mtx
@@ -397,9 +406,12 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
-    /* Compact title in secondary font — fits the 62-px right column. */
-    canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str(canvas, 66, 10, "Claude Buddy");
+    /* Title: single-word "ClaudeBuddy" in primary font. Borderline fit
+     * in the 62-px right column (proportional font, ~5-6 px avg char
+     * width × 11 chars). If it overflows we'd drop back to secondary
+     * "Claude Buddy" from the previous layout. */
+    canvas_set_font(canvas, FontPrimary);
+    canvas_draw_str(canvas, 66, 12, "ClaudeBuddy");
 
     /* Summarized msg centered in the freed vertical space:
      *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)

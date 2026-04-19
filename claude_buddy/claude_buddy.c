@@ -1374,13 +1374,21 @@ int32_t claude_buddy_app(void* p) {
         }
 
         /* Dismiss modal locally regardless of TX result — immediate
-         * visual ack. Note the result on the status line so the user
-         * can distinguish "sent" from "tried but BLE refused". Also
-         * update streak counters + heart-transient here so the pet's
-         * mood reflects the decision immediately. */
+         * visual ack via the narration phase. Also update streak
+         * counters + heart-transient here so the pet's mood
+         * reflects the decision immediately.
+         *
+         * Deliberately do NOT overwrite hb_msg with "sent: X (ok)"
+         * — the narration already shows "Claudochi used APPROVE!"
+         * and after that expires the home screen should resume its
+         * normal bars/age panel rather than holding a stale status
+         * line until the next heartbeat. If TX failed, the desktop
+         * will re-send the prompt and the modal will naturally
+         * reopen after narration expires. */
         furi_mutex_acquire(app->mtx, FuriWaitForever);
         app->mode = ClaudeBuddyModeNormal;
         app->prompt_id[0] = '\0';
+        (void)tx_ok;
         /* Kick off the narration phase — modal stays visible showing
          * "Claudochi used X!" for NARRATION_LINGER_MS even though
          * mode already flipped to Normal. Draw path gates on
@@ -1388,12 +1396,6 @@ int32_t claude_buddy_app(void* p) {
         uint32_t now = furi_get_tick();
         strlcpy(app->narration_decision, decision, sizeof(app->narration_decision));
         app->narration_until_ms = now + NARRATION_LINGER_MS;
-        snprintf(
-            app->hb_msg,
-            sizeof(app->hb_msg),
-            "sent: %s (%s)",
-            decision,
-            tx_ok ? "ok" : "fail");
 
         /* Approval = anything but deny. Derived from the decision
          * string because OK now confirms whichever cell the cursor

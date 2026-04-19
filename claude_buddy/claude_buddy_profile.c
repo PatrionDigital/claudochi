@@ -188,13 +188,6 @@ static FuriHalBleProfileBase* claude_buddy_profile_start(FuriHalBleProfileParams
         ble_gatt_characteristic_init(p->svc_handle, &claude_buddy_chars[i], &p->chars[i]);
     }
 
-    FURI_LOG_I(
-        TAG,
-        "NUS service up: svc=%u rx=%u tx=%u",
-        p->svc_handle,
-        p->chars[ClaudeBuddyCharRx].handle,
-        p->chars[ClaudeBuddyCharTx].handle);
-
     return &p->base;
 }
 

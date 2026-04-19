@@ -684,6 +684,39 @@ static void ensure_anim(ClaudeBuddyApp* app, PetState s) {
     app->anim_stage = stage;
 }
 
+/* Egg-crack progression within EvoEgg. Age < 10 keeps us in the Egg
+ * stage; as the pet approaches hatching, cracks grow visible on the
+ * shell so the user gets a progressive "something's about to happen"
+ * cue rather than a silent jump from pristine-egg to Child sprite at
+ * age=10. Returns the crack level 0/1/2:
+ *   0 — pristine (age 0..3)
+ *   1 — hairline single crack (age 4..6)
+ *   2 — branching fork (age 7..9)
+ * age >= 10 → out of Egg stage, caller should not be invoking this. */
+static uint8_t egg_crack_level(uint32_t age) {
+    if(age >= 7u) return 2;
+    if(age >= 4u) return 1;
+    return 0;
+}
+
+/* Paint the current mascot animation, then (only if we're still in
+ * EvoEgg) layer the age-dependent crack overlay on top. Crack
+ * positions picked so the lines fall on the egg's upper light surface
+ * (y=16..23) without crossing the face features (eyes at y=28, mouth
+ * at y=40). Caller must hold app->mtx — we only read animation /
+ * stage / age fields. */
+static void draw_mascot(Canvas* canvas, ClaudeBuddyApp* app) {
+    if(!app->current_anim) return;
+    canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
+    if(app->anim_stage != EvoEgg) return;
+    uint8_t lvl = egg_crack_level(app->age_transactions);
+    if(lvl == 2) {
+        canvas_draw_icon(canvas, 22, 16, &I_overlay_egg_crack_2_22x8);
+    } else if(lvl == 1) {
+        canvas_draw_icon(canvas, 24, 17, &I_overlay_egg_crack_1_18x6);
+    }
+}
+
 /* ============================================================
  *  Heartbeat ingest
  * ============================================================ */
@@ -856,9 +889,7 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
          *   - "Allow?" (PRIMARY, grabby header)
          *   - Tool name in FontSecondary below (just context)
          *   - OK/Left keybindings at the bottom */
-        if(app->current_anim) {
-            canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
-        }
+        draw_mascot(canvas, app);
 
         canvas_set_font(canvas, FontPrimary);
         canvas_draw_str(canvas, 66, 14, "Allow?");
@@ -885,9 +916,7 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     (void)r;
     (void)w;
 
-    if(app->current_anim) {
-        canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
-    }
+    draw_mascot(canvas, app);
 
     /* Title "Claudochi" in FontPrimary — Tamagotchi-ified brand mark.
      * Flipper's default fonts are ASCII-only (haxrcorp_4089_tr,

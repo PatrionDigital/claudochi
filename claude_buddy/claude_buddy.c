@@ -52,8 +52,8 @@ typedef enum {
 } ClaudeBuddyMode;
 
 /* Visible pet state. Derived from BT state + heartbeat counts + local
- * tracking (streaks, transients, battery). Priority order (top wins)
- * in pet_state_derive() below. */
+ * tracking (streaks, transients, battery, tamagotchi stats). Priority
+ * order (top wins) in pet_state_derive() below. */
 typedef enum {
     PetStateSleep,        /* disconnected, or nothing open on desktop */
     PetStateIdle,         /* connected, sessions open but not generating */
@@ -65,6 +65,13 @@ typedef enum {
     PetStateReconnecting, /* transient: was Connected, now Advertising */
     PetStateHappy,        /* 3+ consecutive approvals (mood) */
     PetStateGrumpy,       /* 2+ consecutive denials (mood) */
+    /* Tamagotchi-layer moods (Phase 5e): play/feed stats drive these.
+     * Longer horizon than approval streaks — persist across prompt
+     * decisions, decay over minutes. */
+    PetStateContent,      /* play+feed both high */
+    PetStateFocused,      /* feed high, play low — quietly at work */
+    PetStateLonely,       /* both low, sustained */
+    PetStateStarving,     /* feed == 0 for extended period */
 } PetState;
 
 #define TOKENS_MILESTONE         (10000u)
@@ -75,6 +82,19 @@ typedef enum {
 #define HAPPY_STREAK             (3)
 #define GRUMPY_STREAK            (2)
 #define LOW_BATTERY_PCT          (20)
+
+/* Tamagotchi tuning */
+#define LEVEL_MAX                (1000u)
+#define PLAY_HIGH                (500u)
+#define PLAY_LOW                 (200u)
+#define FEED_HIGH                (500u)
+#define FEED_LOW                 (200u)
+#define CLASSIFY_WINDOW_MS       (30000u)  /* msg → tool-call window */
+#define DECAY_TICK_MS            (60000u)  /* decay once per minute */
+#define PLAY_DECAY_PER_MIN       (2u)
+#define FEED_DECAY_PER_MIN       (1u)
+#define LONELY_SUSTAIN_MS        (90000u)  /* 90s of low-low = lonely */
+#define STARVING_SUSTAIN_MS      (300000u) /* 5min of zero feed = starving */
 
 typedef struct {
     FuriMutex* mtx;
@@ -146,9 +166,30 @@ typedef struct {
      * narrative text, anything that doesn't match summarize_msg's
      * status ladder) feed into these counters. We don't render the
      * content; just acknowledge the activity with a pulsing "…"
-     * indicator and accumulate for Phase 5e play/feed mechanics. */
+     * indicator and accumulate for the Phase 5e play/feed mechanics. */
     uint32_t last_activity_ms;
     uint32_t interaction_bytes;
+
+    /* Play/feed levels, each 0..LEVEL_MAX. Drive Content/Focused/
+     * Lonely/Starving mood states. Phase 5e.1 in-memory only; Phase
+     * 5e.2 will persist them to SD. */
+    uint32_t play_level;
+    uint32_t feed_level;
+
+    /* Pending classification window: when an unrecognized msg arrives,
+     * we stamp it here. If tokens grow within CLASSIFY_WINDOW_MS, it's
+     * credited to feed (Claude worked on the input). If the window
+     * expires without tokens growth, it's credited to play (just
+     * chatter). Single-slot; a new msg change while pending exists
+     * forces classification of the old one first. */
+    uint32_t pending_msg_ts;
+    uint32_t pending_msg_bytes;
+    int pending_start_tokens;
+
+    /* Sustained-state tracking for Lonely/Starving mood triggers. */
+    uint32_t lonely_since_ms;
+    uint32_t starving_since_ms;
+    uint32_t last_decay_ms;
 } ClaudeBuddyApp;
 
 /* Forward so callbacks can reference the struct. */
@@ -264,13 +305,17 @@ static void summarize_msg(const char* raw, ClaudeBuddyMsgSummary* s) {
 /* Full pet state derivation — priority order (first match wins):
  *    1. Attention   — prompt pending
  *    2. Transient   — heart / celebrate / reconnecting within linger
- *    3. Sleep       — BT not connected
- *    4. Overloaded  — running > 0 && total >= 5
- *    5. Busy        — running > 0
- *    6. Grumpy      — denial_streak >= GRUMPY_STREAK
- *    7. Happy       — approval_streak >= HAPPY_STREAK
- *    8. Idle        — connected with sessions
- *    9. Sleep       — default (no sessions)
+ *    3. Starving    — feed == 0 for STARVING_SUSTAIN_MS (critical)
+ *    4. Sleep       — BT not connected
+ *    5. Overloaded  — running > 0 && total >= 5
+ *    6. Busy        — running > 0
+ *    7. Grumpy      — denial_streak >= GRUMPY_STREAK  (short-horizon UX)
+ *    8. Happy       — approval_streak >= HAPPY_STREAK (short-horizon UX)
+ *    9. Content     — play & feed both high           (long-horizon mood)
+ *   10. Focused     — feed high, play low             (long-horizon mood)
+ *   11. Lonely      — both low for LONELY_SUSTAIN_MS  (long-horizon mood)
+ *   12. Idle        — connected with sessions
+ *   13. Sleep       — default (no sessions)
  * Caller must hold app->mtx. */
 static PetState pet_state_derive(const ClaudeBuddyApp* app) {
     if(app->mode == ClaudeBuddyModePrompt || app->hb_waiting > 0) {
@@ -280,18 +325,104 @@ static PetState pet_state_derive(const ClaudeBuddyApp* app) {
     if(app->transient_until_ms && now < app->transient_until_ms) {
         return app->transient_state;
     }
+    if(app->starving_since_ms && now - app->starving_since_ms > STARVING_SUSTAIN_MS) {
+        return PetStateStarving;
+    }
     if(app->bt_status != BtStatusConnected) return PetStateSleep;
     if(app->hb_running > 0) {
         return (app->hb_total >= 5) ? PetStateOverloaded : PetStateBusy;
     }
     if(app->denial_streak >= GRUMPY_STREAK) return PetStateGrumpy;
     if(app->approval_streak >= HAPPY_STREAK) return PetStateHappy;
+    if(app->play_level >= PLAY_HIGH && app->feed_level >= FEED_HIGH) return PetStateContent;
+    if(app->feed_level >= FEED_HIGH && app->play_level < PLAY_LOW) return PetStateFocused;
+    if(app->play_level < PLAY_LOW && app->feed_level < FEED_LOW &&
+       app->lonely_since_ms && now - app->lonely_since_ms > LONELY_SUSTAIN_MS) {
+        return PetStateLonely;
+    }
     return (app->hb_total > 0) ? PetStateIdle : PetStateSleep;
 }
 
 static void set_transient(ClaudeBuddyApp* app, PetState s, uint32_t linger_ms) {
     app->transient_state = s;
     app->transient_until_ms = furi_get_tick() + linger_ms;
+}
+
+/* =======================================================================
+ *  Claudegotchi classification + decay
+ * ======================================================================= */
+
+static void clamp_level(uint32_t* lvl) {
+    if(*lvl > LEVEL_MAX) *lvl = LEVEL_MAX;
+}
+
+/* Classify the pending msg change: feed if tokens grew during the
+ * window, play if not. Clears the pending slot. */
+static void gotchi_classify_pending(ClaudeBuddyApp* app) {
+    if(!app->pending_msg_ts) return;
+    int tokens_delta = app->hb_tokens - app->pending_start_tokens;
+    if(tokens_delta > 0) {
+        app->feed_level += app->pending_msg_bytes;
+        clamp_level(&app->feed_level);
+    } else {
+        app->play_level += app->pending_msg_bytes;
+        clamp_level(&app->play_level);
+    }
+    app->pending_msg_ts = 0;
+    app->pending_msg_bytes = 0;
+}
+
+/* Called when an unrecognized msg arrives. First resolves any prior
+ * pending entry that's older than CLASSIFY_WINDOW_MS — otherwise we'd
+ * lose classification of that earlier entry. Then stamps the new one. */
+static void gotchi_record_msg_change(ClaudeBuddyApp* app, uint32_t bytes) {
+    uint32_t now = furi_get_tick();
+    if(app->pending_msg_ts && now - app->pending_msg_ts > CLASSIFY_WINDOW_MS) {
+        gotchi_classify_pending(app);
+    } else if(app->pending_msg_ts) {
+        /* New input overrides old within window — treat the old one
+         * as "ambiguous" and classify based on tokens so far. */
+        gotchi_classify_pending(app);
+    }
+    app->pending_msg_ts = now;
+    app->pending_msg_bytes = bytes;
+    app->pending_start_tokens = app->hb_tokens;
+}
+
+/* Periodic tick — expires pending past window, runs decay, tracks
+ * lonely/starving sustain timers. Call under app->mtx. */
+static void gotchi_tick(ClaudeBuddyApp* app) {
+    uint32_t now = furi_get_tick();
+
+    /* Expire pending beyond the window. */
+    if(app->pending_msg_ts && now - app->pending_msg_ts > CLASSIFY_WINDOW_MS) {
+        gotchi_classify_pending(app);
+    }
+
+    /* Decay once per minute. */
+    if(!app->last_decay_ms) {
+        app->last_decay_ms = now;
+    } else if(now - app->last_decay_ms >= DECAY_TICK_MS) {
+        app->play_level = (app->play_level > PLAY_DECAY_PER_MIN) ?
+                              app->play_level - PLAY_DECAY_PER_MIN : 0;
+        app->feed_level = (app->feed_level > FEED_DECAY_PER_MIN) ?
+                              app->feed_level - FEED_DECAY_PER_MIN : 0;
+        app->last_decay_ms = now;
+    }
+
+    /* Sustain timers. */
+    bool low_low = app->play_level < PLAY_LOW && app->feed_level < FEED_LOW;
+    if(low_low) {
+        if(!app->lonely_since_ms) app->lonely_since_ms = now;
+    } else {
+        app->lonely_since_ms = 0;
+    }
+
+    if(app->feed_level == 0) {
+        if(!app->starving_since_ms) app->starving_since_ms = now;
+    } else {
+        app->starving_since_ms = 0;
+    }
 }
 
 /* Map a pet state to its animated icon asset. Called by ensure_anim()
@@ -307,6 +438,10 @@ static const Icon* anim_icon_for_state(PetState s) {
     case PetStateReconnecting: return &A_mascot_reconnecting_64x64;
     case PetStateHappy: return &A_mascot_happy_64x64;
     case PetStateGrumpy: return &A_mascot_grumpy_64x64;
+    case PetStateContent: return &A_mascot_content_64x64;
+    case PetStateFocused: return &A_mascot_focused_64x64;
+    case PetStateLonely: return &A_mascot_lonely_64x64;
+    case PetStateStarving: return &A_mascot_starving_64x64;
     case PetStateIdle: /* fall through */
     default: return &A_mascot_idle_64x64;
     }
@@ -362,16 +497,19 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
         json_tok_strcpy(line, &tokens[v], app->hb_msg, sizeof(app->hb_msg));
 
         /* Classify the new msg. Unmatched patterns are treated as
-         * Claudegotchi-food: don't display, but stamp activity and
-         * accrue interaction_bytes. Only count on actual change to
+         * Claudegotchi substrate: stamp activity, accrue
+         * interaction_bytes, and open a pending classification window
+         * for the play/feed split. Only count on actual change to
          * avoid double-counting when the desktop re-sends the same
          * msg on its 10s keepalive. */
         if(app->hb_msg[0] && strcmp(prev_msg, app->hb_msg) != 0) {
             ClaudeBuddyMsgSummary probe;
             summarize_msg(app->hb_msg, &probe);
             if(probe.label[0] == '\0') {
+                uint32_t bytes = (uint32_t)strlen(app->hb_msg);
                 app->last_activity_ms = furi_get_tick();
-                app->interaction_bytes += (uint32_t)strlen(app->hb_msg);
+                app->interaction_bytes += bytes;
+                gotchi_record_msg_change(app, bytes);
             }
         }
     }
@@ -487,23 +625,19 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     if(mode == ClaudeBuddyModePrompt) {
         /* Prompt modal: attention mascot on the left, stripped-down
          * decision surface on the right.
-         *   - "Allow?" (secondary, small, top)
-         *   - Tool name in FontPrimary (bigger — "Bash", "Read", etc.)
-         *   - OK/Left keybindings at the bottom
-         * The full hint/command gets truncated awkwardly at this screen
-         * width, so we drop it here — the user can glance at their Mac
-         * for the full command if they need to. */
+         *   - "Allow?" (PRIMARY, grabby header)
+         *   - Tool name in FontSecondary below (just context)
+         *   - OK/Left keybindings at the bottom */
         if(app->current_anim) {
             canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
         }
 
-        canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 66, 10, "Allow?");
-
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 66, 32, app->prompt_tool);
+        canvas_draw_str(canvas, 66, 14, "Allow?");
 
         canvas_set_font(canvas, FontSecondary);
+        canvas_draw_str(canvas, 66, 28, app->prompt_tool);
+
         canvas_draw_str(canvas, 66, 52, "OK:yes");
         canvas_draw_str(canvas, 66, 62, "L:deny");
 
@@ -584,6 +718,12 @@ static void claude_buddy_input(InputEvent* event, void* ctx) {
 
 static void claude_buddy_redraw_tick(void* ctx) {
     ClaudeBuddyApp* app = ctx;
+    /* Tamagotchi tick: decay, expire pending classifications, track
+     * lonely/starving sustain timers. Runs at 4 Hz (REDRAW_PERIOD_MS)
+     * so lonely/starving transitions are picked up within ~250ms. */
+    furi_mutex_acquire(app->mtx, FuriWaitForever);
+    gotchi_tick(app);
+    furi_mutex_release(app->mtx);
     view_port_update(app->view_port);
 }
 

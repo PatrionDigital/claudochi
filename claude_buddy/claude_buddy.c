@@ -110,8 +110,8 @@ typedef enum {
  * play climbs (each msg change = play bump). Crediting feed directly
  * from tokens delta covers the common case: Claude actually doing work
  * feeds the pet, regardless of what msg says. */
-#define FEED_TOKENS_PER_UNIT     (50u)     /* 500 tokens → 10 feed */
-#define FEED_GAIN_CAP_PER_HB     (30u)     /* hard cap per heartbeat */
+#define FEED_TOKENS_PER_UNIT     (15u)     /* 150 tokens → 10 feed */
+#define FEED_GAIN_CAP_PER_HB     (60u)     /* hard cap per heartbeat */
 /* Explicit approvals feed the pet — each "yes, go do this tool" is a
  * deliberate user intent to spend compute, which thematically = food.
  * Larger than a typical single-heartbeat tokens credit (cap 30/hb)

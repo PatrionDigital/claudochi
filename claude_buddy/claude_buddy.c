@@ -172,7 +172,11 @@ typedef struct {
     ClaudeBuddyMode mode;
     char prompt_id[48];
     char prompt_tool[32];
-    char prompt_hint[96];
+    char prompt_hint[96]; /* parsed but not rendered — Pokemon modal has no room */
+    /* Pokemon-style action row cursor. col=0 selects ONCE, col=1
+     * selects DENY. Reset to 0 on each new prompt. Only `once` and
+     * `deny` are valid decisions per REFERENCE.md. */
+    uint8_t prompt_cursor_col;
 
     /* GUI */
     FuriMessageQueue* input_queue;
@@ -679,6 +683,21 @@ static PetEvoStage evo_stage_from_age(uint32_t age) {
     return EvoEgg;
 }
 
+/* 32×32 attention sprite per evo stage — used only in the Pokemon
+ * modal's pet slot. Static icons (not IconAnimation) because the
+ * modal always shows a single pose; no animation loop needed.
+ * Subsampled from the corresponding 64×64 attention frame. */
+static const Icon* attn_32_for_stage(PetEvoStage e) {
+    switch(e) {
+    case EvoEgg:   return &I_mascot_egg_attn_32x32;
+    case EvoChild: return &I_mascot_child_attn_32x32;
+    case EvoTeen:  return &I_mascot_teen_attn_32x32;
+    case EvoAdult: return &I_mascot_adult_attn_32x32;
+    case EvoElder: return &I_mascot_elder_attn_32x32;
+    default:       return &I_mascot_child_attn_32x32;
+    }
+}
+
 static const Icon* anim_icon_for_state(PetState s, PetEvoStage e) {
     if((unsigned)s >= PetStateCount || (unsigned)e >= EvoCount) {
         return &A_mascot_child_idle_64x64;
@@ -887,6 +906,10 @@ static void handle_rx_line(ClaudeBuddyApp* app, const char* line, size_t line_le
     if(entering_prompt) {
         /* Stamp the time so the input handler can detect fast approval. */
         app->prompt_shown_at_ms = furi_get_tick();
+        /* Reset cursor to ONCE (left cell) — safe default. A previous
+         * DENY selection shouldn't persist into the next prompt and
+         * risk an accidental reject on quick OK. */
+        app->prompt_cursor_col = 0;
     }
 
     ensure_anim(app, pet_state_derive(app));
@@ -979,21 +1002,45 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
     }
 
     if(mode == ClaudeBuddyModePrompt) {
-        /* Prompt modal: attention mascot on the left, stripped-down
-         * decision surface on the right.
-         *   - "Allow?" (PRIMARY, grabby header)
-         *   - Tool name in FontSecondary below (just context)
-         *   - OK/Left keybindings at the bottom */
-        draw_mascot(canvas, app);
+        /* Pokemon-style battle modal:
+         *   y=0..10   banner    "Wild <tool> appeared!"
+         *   y=11      divider
+         *   y=12..46  combat    "?" glyph (left) + 32×32 pet (right)
+         *   y=47      divider
+         *   y=48..63  actions   1-row × 2-col grid, ONCE | DENY with cursor
+         *
+         * Only ONCE + DENY are rendered because REFERENCE.md lists
+         * only those as valid decisions. Left/Right moves cursor,
+         * OK confirms. Up/Down have no effect (single-row). */
 
-        canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 66, 14, "Allow?");
-
+        /* Banner */
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 66, 28, app->prompt_tool);
+        char banner[56]; /* "Wild " + up to 32-char tool + " appeared!" + null */
+        snprintf(banner, sizeof(banner), "Wild %s appeared!", app->prompt_tool);
+        canvas_draw_str(canvas, 2, 9, banner);
+        canvas_draw_line(canvas, 0, 11, 127, 11);
 
-        canvas_draw_str(canvas, 66, 52, "OK:yes");
-        canvas_draw_str(canvas, 66, 62, "L:deny");
+        /* Combat zone — tool glyph (left) + attention pet (right).
+         * Tool glyph is the generic framed "?"; tool NAME sits in
+         * the banner above, so the left slot stays stage-agnostic. */
+        canvas_draw_icon(canvas, 16, 14, &I_icon_tool_32x32);
+        canvas_draw_icon(canvas, 80, 14, attn_32_for_stage(app->anim_stage));
+
+        canvas_draw_line(canvas, 0, 47, 127, 47);
+
+        /* Action row — ONCE | DENY with vertical divider + cursor. */
+        canvas_draw_line(canvas, 63, 48, 63, 63);
+        canvas_set_font(canvas, FontSecondary);
+        static const char* const LABELS[2] = {"ONCE", "DENY"};
+        const int cell_xs[2] = {2, 66};
+        const int label_xs[2] = {10, 74};
+        const int by = 60;
+        for(int c = 0; c < 2; c++) {
+            if(c == app->prompt_cursor_col) {
+                canvas_draw_str(canvas, cell_xs[c], by, ">");
+            }
+            canvas_draw_str(canvas, label_xs[c], by, LABELS[c]);
+        }
 
         furi_mutex_release(app->mtx);
         return;
@@ -1243,10 +1290,27 @@ int32_t claude_buddy_app(void* p) {
         if(mode != ClaudeBuddyModePrompt) continue;
         if(id[0] == '\0') continue;
 
-        const char* decision = NULL;
-        if(event.key == InputKeyOk) decision = "once";
-        else if(event.key == InputKeyLeft) decision = "deny";
-        if(!decision) continue;
+        /* Pokemon nav: Left/Right cycle cursor between ONCE (col=0)
+         * and DENY (col=1). Up/Down no-op. OK confirms current cell. */
+        if(event.key == InputKeyLeft || event.key == InputKeyRight) {
+            furi_mutex_acquire(app->mtx, FuriWaitForever);
+            if(event.key == InputKeyLeft && app->prompt_cursor_col > 0) {
+                app->prompt_cursor_col--;
+            } else if(event.key == InputKeyRight && app->prompt_cursor_col < 1) {
+                app->prompt_cursor_col++;
+            }
+            furi_mutex_release(app->mtx);
+            view_port_update(app->view_port);
+            continue;
+        }
+
+        if(event.key != InputKeyOk) continue;
+
+        /* OK confirms — decision from current cursor column. */
+        furi_mutex_acquire(app->mtx, FuriWaitForever);
+        const char* decision =
+            (app->prompt_cursor_col == 0) ? "once" : "deny";
+        furi_mutex_release(app->mtx);
 
         bool tx_ok = false;
         if(app->profile) {
@@ -1279,7 +1343,10 @@ int32_t claude_buddy_app(void* p) {
             tx_ok ? "ok" : "fail");
 
         uint32_t now = furi_get_tick();
-        bool approved = (event.key == InputKeyOk);
+        /* Approval = anything but deny. Derived from the decision
+         * string because OK now confirms whichever cell the cursor
+         * is on, not just ONCE. */
+        bool approved = strcmp(decision, "deny") != 0;
         if(approved) {
             app->approval_streak++;
             app->denial_streak = 0;

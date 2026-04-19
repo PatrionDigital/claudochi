@@ -147,16 +147,6 @@ static void
     dst[len] = '\0';
 }
 
-static const char* bt_status_str(BtStatus s) {
-    switch(s) {
-    case BtStatusUnavailable: return "Unavailable";
-    case BtStatusOff: return "Off";
-    case BtStatusAdvertising: return "Advertising";
-    case BtStatusConnected: return "Connected";
-    default: return "?";
-    }
-}
-
 /* Derive pet visible state from the live fields. Call under app->mtx
  * (reads multiple fields; caller must hold the lock). */
 static PetState pet_state_from_app(
@@ -334,26 +324,27 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         return;
     }
 
-    /* Normal mode: 64×64 mascot animation on the left, title + status +
-     * msg on the right 64 px. */
+    /* Normal mode: mascot carries the state signal (state-driven frames
+     * cover sleep/idle/busy/attention, plus blue LED for connected).
+     * Right column is deliberately minimal: just a title block and the
+     * current msg. Removed BT status line + T/R/W counters — they
+     * duplicated info the mascot already conveys, and the msg has
+     * more room to breathe now. */
+    (void)bt_status;
+    (void)cccd;
+    (void)t;
+    (void)r;
+    (void)w;
+
     if(app->current_anim) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
     canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 66, 10, "Claude");
-    canvas_draw_str(canvas, 66, 22, "Buddy");
+    canvas_draw_str(canvas, 66, 14, "Claude");
+    canvas_draw_str(canvas, 66, 28, "Buddy");
 
     canvas_set_font(canvas, FontSecondary);
-    char line[32];
-    snprintf(line, sizeof(line), "%s%c", bt_status_str(bt_status), cccd ? '+' : ' ');
-    canvas_draw_str(canvas, 66, 34, line);
-
-    snprintf(line, sizeof(line), "T%d R%d W%d", t, r, w);
-    canvas_draw_str(canvas, 66, 44, line);
-
-    /* msg: short form (TODO: summarize to 1-2 words on the desktop side
-     * or locally). Truncated to ~10 chars by canvas clip, clean enough. */
     canvas_draw_str(canvas, 66, 56, app->hb_msg[0] ? app->hb_msg : "(waiting)");
 
     furi_mutex_release(app->mtx);

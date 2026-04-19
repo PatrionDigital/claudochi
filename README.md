@@ -1,36 +1,65 @@
 # raderado
 
-Flipper Zero FAP that acts as a BLE peripheral for Anthropic's Claude desktop
-Hardware Buddy bridge. Built as a pure userland app (`FlipperAppType.EXTERNAL`)
-— no firmware fork required.
+Flipper Zero app that turns the device into an Anthropic **Hardware Buddy** —
+a tiny hardware companion for Claude Code Desktop. Pair it with the host's
+Developer menu, and the Flipper shows live session state, fires a vibrating
+modal when Claude asks for permission, and lets you approve or deny with a
+physical button.
 
-Target firmware: [Unleashed](https://github.com/DarkFlippers/unleashed-firmware).
+Built as a pure userland FAP (`FlipperAppType.EXTERNAL`) against the
+[Unleashed](https://github.com/DarkFlippers/unleashed-firmware) firmware —
+no firmware fork, no reflash required.
+
 Protocol spec: [anthropics/claude-desktop-buddy REFERENCE.md](https://github.com/anthropics/claude-desktop-buddy/blob/main/REFERENCE.md).
 
-**Status:** Phase 1 skeleton. Profile template, GAP advertising config, and
-NUS UUIDs are in place. GATT service/characteristic wiring and JSON handling
-are the next milestone.
+## What works (v0.1)
+
+- Advertises as **Claude Raderado**
+- LE Secure Connections bonded pairing — 6-digit passkey auto-rendered by the
+  Flipper's built-in pin-code overlay
+- Nordic UART Service with RX (write) and TX (notify) characteristics at the
+  canonical UUIDs
+- Heartbeat JSON parsed via vendored jsmn, rendered live on the 128×64 OLED
+- **Four pet states** derived from heartbeat signals, each with its own 64×64
+  1-bit sprite:
+
+  | State | Trigger | Visual |
+  |---|---|---|
+  | `sleep` | No BT connection, or nothing open on desktop | Closed eyes, `Zzz` trail drifting up |
+  | `idle` | Connected, `total > 0`, `running == 0` | Base pose, neutral face |
+  | `busy` | `running > 0` (Claude generating) | Focused pupils, thinking-dots mouth, three dots floating above head |
+  | `attention` | `waiting > 0` or permission modal open | Wide eyes, open mouth, big `!` above head |
+
+- Permission prompt modal with hardware button decisions:
+  - **OK** emits `{"cmd":"permission","id":"...","decision":"once"}` over TX
+  - **Left** emits `decision:"deny"`
+  - Vibrates on modal open (edge-triggered, doesn't buzz repeatedly)
+  - Modal layout: attention mascot on the left, tool/hint/keybindings on the right
+- Blue LED solid while a central is connected
+- Clean teardown: restores the stock Serial BLE profile on exit
 
 ## Requirements
 
-- Flipper Zero running **Unleashed firmware** (any recent `unlshd-*` release).
-  Install via [qFlipper](https://flipperzero.one/update) or the
+- **Flipper Zero running Unleashed firmware** (any recent `unlshd-*` release).
+  Flash via [qFlipper](https://flipperzero.one/update) or the
   [Unleashed web updater](https://unleashedflip.com/).
-- macOS / Linux / Windows with Python 3.10+ and `pipx` (recommended) or
-  `pip --user`.
-- USB-C cable connecting the Flipper to your computer for dev flashing.
+- **Claude Code Desktop** with the Hardware Buddy feature enabled on your
+  account. Currently gated by a server-side flag; request access through
+  Anthropic's maker/support channels if you don't see the `Developer → Open
+  Hardware Buddy…` menu item after enabling Developer Mode.
+- **macOS or Windows host.** On macOS, grant Claude the Bluetooth permission
+  (System Settings → Privacy & Security → Bluetooth) — this was the single
+  biggest gotcha during dev.
+- `pipx` for installing `ufbt` (build tool).
 
-## One-time setup
+## Setup
 
 ```sh
-# 1. Install ufbt (Flipper's SDK-based build tool)
+# Install ufbt and pin the SDK channel to Unleashed
 pipx install ufbt
-
-# 2. Pin the SDK to the Unleashed release channel
-#    (stock update.flipperzero.one does NOT export the symbols this app needs)
 ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release
 
-# 3. Clone this repo
+# Clone this repo
 git clone https://github.com/PatrionDigital/raderado.git
 cd raderado
 ```
@@ -39,100 +68,101 @@ cd raderado
 
 ### Dev loop — build, push, launch in one step
 
-Plug the Flipper in over USB, close qFlipper if it's open (it holds the serial
-port), then:
-
 ```sh
 cd claude_buddy
 ufbt launch
 ```
 
-`ufbt launch` compiles `claude_buddy.fap`, uploads it to the Flipper's SD
-card under a temporary path, and launches it immediately. This is the fastest
-iteration path — the app is not retained across reboots.
+Compiles `claude_buddy.fap`, uploads to a temporary SD path, and launches.
+Ephemeral; fastest iteration path.
 
 ### Persistent install
 
-The build artifact lives at `claude_buddy/dist/claude_buddy.fap`. To install
-it permanently so it shows up in the Flipper's Apps menu:
+Build output lands at `claude_buddy/dist/claude_buddy.fap`. To make it
+appear permanently in the Flipper's Apps menu:
 
-1. Plug the Flipper in and open **qFlipper**.
-2. Open the File Manager tab.
-3. Navigate to `SD Card/apps/Bluetooth/` (matches the `fap_category="Bluetooth"`
-   declared in [application.fam](claude_buddy/application.fam)).
-4. Drag `claude_buddy/dist/claude_buddy.fap` into that folder.
+1. Plug the Flipper in, open **qFlipper**
+2. File Manager → `SD Card/apps/Bluetooth/`
+3. Drop `claude_buddy.fap` in
 
-On the Flipper: **Apps → Bluetooth → Claude Buddy** to launch.
+Launch from the Flipper: **Apps → Bluetooth → Claude Buddy**.
 
-### Alternative: via CLI
+## Pairing flow
 
-```sh
-cd claude_buddy
-ufbt                            # build only
-ufbt cli                        # opens Flipper CLI over USB
-# then at the Flipper prompt:
-storage write_chunk /ext/apps/Bluetooth/claude_buddy.fap <size>
-# (or use 'storage mkdir' and 'storage write' as appropriate — qFlipper is simpler)
-```
+1. Launch the Claude Buddy app on the Flipper — screen shows the mascot and
+   `BT: Advertising`.
+2. On your Mac/PC, open **Claude Code Desktop**.
+3. **Help → Troubleshooting → Enable Developer Mode**. Fully quit (cmd+Q)
+   and relaunch so the Developer menu registers.
+4. **Developer → Open Hardware Buddy…**
+5. Click **Connect**. Pick `Claude Raderado` from the scan list.
+6. macOS/Windows shows a system-level pairing prompt. The Flipper's screen
+   overlays a 6-digit passkey; type it into the host prompt.
+7. Done. Flipper BT line flips to `Connected`, blue LED on, mascot starts
+   reacting to your session.
 
-## Pairing with the Claude desktop app
+## Troubleshooting
 
-1. On your Mac/Windows: open the Claude desktop app.
-2. **Help → Troubleshooting → Enable Developer Mode** (macOS menu bar), then
-   fully quit (`cmd+Q`) and relaunch.
-3. **Developer → Open Hardware Buddy…** — if this item is missing, the
-   feature is gated on your account; see *Troubleshooting* below.
-4. Click **Connect**. The picker lists `Claude` followed by two hex
-   digits derived from the BT MAC's low byte (e.g. `Claude4F`). Eight
-   characters is the maximum that fits in a 31-byte legacy adv packet
-   alongside the 128-bit NUS UUID and flags.
-5. Select it. macOS will ask for Bluetooth permission on first use.
-6. The Flipper screen will show a **6-digit passkey** (rendered by the
-   bt_service's built-in pin-code overlay). Type it into the desktop
-   prompt. Bonding + encryption are established; the desktop then
-   subscribes to TX notifications and begins sending heartbeat JSON.
-
-The link is LE Secure Connections with MITM protection by default —
-`CLAUDE_BUDDY_ENCRYPTED` is set in [application.fam](claude_buddy/application.fam).
-Rebuild with that cdefine removed to regress to an unencrypted link
-for diagnostics (see the `#ifdef` branch in
-[claude_buddy_profile.c](claude_buddy/claude_buddy_profile.c)).
+- **Claude Desktop's Hardware Buddy picker shows "None found".** Most
+  likely the macOS Bluetooth permission for Claude isn't granted. Check
+  System Settings → Privacy & Security → Bluetooth. Second-most-likely:
+  stale CoreBluetooth scan cache; `sudo pkill bluetoothd` and reopen the
+  Hardware Buddy window. Third: `Developer → Open Hardware Buddy…` menu
+  item is missing entirely — the Hardware Buddy feature gate isn't enabled
+  on your account yet (ask Anthropic).
+- **`ufbt launch` hangs at `Using flip_<name>`.** The Flipper's display has
+  gone to sleep; its CLI prompt task is descheduled and the prompt byte
+  ufbt is waiting for never arrives. Press any button to wake, retry
+  immediately. If pressing buttons doesn't wake it, force-reboot by
+  holding Back for ~5 seconds.
+- **LightBlue sees the peripheral but Claude Desktop doesn't.** Permission
+  or cache issue as above. The picker filters its own scan by name prefix
+  (`Claude` / `Nibblet`), not by service UUID.
+- **Build errors about undefined BLE symbols.** The SDK is pointing at
+  stock Flipper instead of Unleashed. Re-run the `ufbt update` command
+  from the Setup section.
+- **"None found" even after all of the above.** Try `ufbt launch` a second
+  time — occasionally the Flipper's BLE stack needs a restart to recover
+  from a previous broken adv state.
 
 ## Project layout
 
 ```
 raderado/
-├── claude_buddy/                     # the FAP
-│   ├── application.fam               # FAP manifest
-│   ├── claude_buddy.c                # main entry point
-│   ├── claude_buddy_profile.{c,h}    # BLE profile template, NUS UUIDs, GAP config
-│   └── dist/claude_buddy.fap         # build output (gitignored)
-├── reference/                        # shallow clone of Unleashed firmware (gitignored, read-only)
+├── claude_buddy/
+│   ├── application.fam                 # FAP manifest, icon + assets wired
+│   ├── icons/claude_buddy_10px.png     # Apps-menu icon (10×10 1-bit)
+│   ├── assets/                         # in-app sprite bundle
+│   │   ├── mascot_idle_64x64.png
+│   │   ├── mascot_sleep_64x64.png
+│   │   ├── mascot_busy_64x64.png
+│   │   └── mascot_attention_64x64.png
+│   ├── claude_buddy.c                  # main — GUI, state machine, RX drain
+│   ├── claude_buddy_profile.{h,c}      # BLE profile (NUS GATT + advertising)
+│   ├── ble_stack_shim.h                # vendored HCI packet types + VSEVT codes
+│   └── jsmn.h                          # vendored MIT-licensed JSON parser
+├── reference/                          # shallow Unleashed clone (gitignored)
+├── TODO.md                             # living backlog
 └── README.md
 ```
 
-## Troubleshooting
+## Protocol coverage vs REFERENCE.md
 
-- **`ufbt launch` hangs at `Using flip_<name>...` and never progresses.**
-  The Flipper's CLI only emits its prompt when the display is awake and you're
-  at the home/dolphin screen. Wake the screen with any button press and retry
-  immediately. If the screen is frozen, force-reboot by holding **Back** for
-  ~5 seconds. If the port itself is held, `lsof /dev/cu.usbmodemflip_*` on
-  macOS will show the offending process (usually qFlipper) — quit it.
-- **Build errors about undefined BLE symbols.** The SDK channel is wrong —
-  re-run `ufbt update --index-url=https://up.unleashedflip.com/directory.json --channel=release`.
-- **App builds but the desktop picker doesn't see "Claude-Raderado".** Three
-  possibilities: (a) the Flipper's BT service is off — enable it in Settings →
-  Bluetooth; (b) the mobile app still has the Serial profile bonded — forget
-  the pairing on your phone; (c) Developer → Open Hardware Buddy… never found
-  it — account-level gate, see next entry.
-- **Developer menu exists but "Open Hardware Buddy…" is missing.** The feature
-  is gated by a server-side GrowthBook flag (ID `2358734848` as of April
-  2026). Editing local config won't enable it; the menu is built once from
-  the initial flag fetch. Ask Anthropic maker/hardware support to enable it
-  on your account. Runtime overrides in DevTools (`Op["2358734848"]={on:true}`
-  or `window.__growthbook.setForcedFeatures(...)`) don't re-trigger the menu
-  build.
+Implemented:
+- [x] NUS service + RX (write + write-without-response) + TX (notify) at the canonical UUIDs
+- [x] Device name starting with `Claude`
+- [x] Bonded pairing with 6-digit passkey (DisplayOnly IO capability)
+- [x] Heartbeat snapshot parsing: `total`, `running`, `waiting`, `msg`, `prompt`
+- [x] Permission reply: `{"cmd":"permission","id":"...","decision":"once"|"deny"}`
+
+Not yet:
+- [ ] `{"cmd":"unpair"}` handler
+- [ ] Richer permission decisions: `session`, `always`
+- [ ] Time sync / owner name rendering
+- [ ] Turn events (per-turn token reporting)
+- [ ] Folder push (1.8 MB asset transport for custom sprite packs)
+
+See [TODO.md](TODO.md) for the full roadmap.
 
 ## License
 

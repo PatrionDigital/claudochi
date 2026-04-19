@@ -397,26 +397,26 @@ static void claude_buddy_draw(Canvas* canvas, void* ctx) {
         canvas_draw_icon_animation(canvas, 0, 0, app->current_anim);
     }
 
-    canvas_set_font(canvas, FontPrimary);
-    canvas_draw_str(canvas, 66, 14, "Claude");
-    canvas_draw_str(canvas, 66, 28, "Buddy");
+    /* Compact title in secondary font — fits the 62-px right column. */
+    canvas_set_font(canvas, FontSecondary);
+    canvas_draw_str(canvas, 66, 10, "Claude Buddy");
 
-    /* Summarized msg:
+    /* Summarized msg centered in the freed vertical space:
      *   label in FontPrimary for punch (RUN/ASK/DONE/FAIL/OK/NO)
-     *   detail word underneath in FontSecondary
+     *   detail word in FontSecondary underneath
      * Unknown/free-form falls back to raw msg in FontSecondary, no label. */
     ClaudeBuddyMsgSummary sum;
     summarize_msg(app->hb_msg, &sum);
     if(sum.label[0]) {
         canvas_set_font(canvas, FontPrimary);
-        canvas_draw_str(canvas, 66, 50, sum.label);
+        canvas_draw_str(canvas, 66, 36, sum.label);
         if(sum.detail[0]) {
             canvas_set_font(canvas, FontSecondary);
-            canvas_draw_str(canvas, 66, 61, sum.detail);
+            canvas_draw_str(canvas, 66, 50, sum.detail);
         }
     } else {
         canvas_set_font(canvas, FontSecondary);
-        canvas_draw_str(canvas, 66, 56, sum.detail[0] ? sum.detail : "(waiting)");
+        canvas_draw_str(canvas, 66, 42, sum.detail[0] ? sum.detail : "(waiting)");
     }
 
     furi_mutex_release(app->mtx);

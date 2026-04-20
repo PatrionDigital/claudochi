@@ -50,6 +50,19 @@ Loose prioritization. Top groups are in rough "most likely next" order; mark ite
 - [x] Narration phase "Claudochi used APPROVE!/DENY!" for 1.5s after confirm
 - [x] v0.5.1: evolution anim text contrast fix (white rect behind glyphs)
 - [x] v0.5.2: force backlight on at evolution cinematic start
+- [x] v0.5.3: TODO.md cleanup — close shipped items, correct misconceptions
+- [x] v0.5.4: TODO.md add brainstorm queue for next session
+- [x] v0.5.5: README rewrite for v0.5.x state
+- [x] v0.5.6: prune Phase-1 diagnostic + redundant hb_msg overwrite
+- [x] v0.5.7: pin Unleashed SDK via `scripts/sdk-pin.sh` (SHA256-verified)
+- [x] v0.5.8: CI (build on push/PR) + auto-release on tag push (validated e2e)
+
+### v0.6 — protocol completeness pack
+- [x] Command/event dispatcher scaffolding at top of handle_rx_line
+- [x] `{"cmd":"unpair"}` → `bt_forget_bonded_devices` + ack
+- [x] `{"cmd":"owner","name":"..."}` → cached in app state + ack
+- [x] `{"time":[epoch, tz_offset]}` → cached (epoch + tz + receive tick)
+- [x] `{"evt":"turn",...}` → counter increment
 
 ## Now
 
@@ -65,37 +78,32 @@ the session opens with a clear menu:
       extend the label list so age-bump rate reflects only meaningful
       interactions (see "Next up — low-hanging polish")
 - [ ] **Stats panel** — second view on Up/Down, shows total tokens,
-      tokens_today, session count, uptime, lifetime approvals/denials
+      tokens_today, session count, uptime, lifetime approvals/denials,
+      owner name, time, turn counter
       (see "Medium features")
 - [ ] **BLE signal strength indicator** — RSSI read via GAP, 1-4 bar icon in
       corner (see "Medium features")
 
 ## Next up — low-hanging polish
 
-- [ ] **README rewrite** — current README has stale "BT: Advertising/Connected" references and pre-Pokemon-modal flow. Replace with validated flow + screenshots of the five life stages and the battle modal.
-- [ ] **Remove Phase-1 diagnostic statements** — `FURI_LOG_I(TAG, "NUS service up...")` etc. Silence the "sent: once (ok)" `hb_msg` overwrite after a short linger rather than holding it until the next heartbeat.
 - [ ] **Richer `summarize_msg` ladder** — observe real desktop msg strings during a session (FURI_LOG on unlabeled msgs), extend pattern list so age-bump rate reflects only meaningful interactions, not every streaming status.
 
 ## Infrastructure
 
-- [ ] **SDK version pin**: commit `.ufbt/state` (or similar) so `ufbt update` reproducibly lands on the same Unleashed release.
-- [ ] **CI**: GitHub Actions workflow that runs `ufbt` on push to verify the FAP still builds cleanly against the pinned SDK.
-- [ ] **Automated release pipeline**: tag push → build `.fap` → attach to GitHub release automatically.
 - [ ] **Unit tests for the JSON parser path** — feed synthetic heartbeats and verify state transitions without needing a real BLE link.
 
 ## Medium features
 
-- [ ] **Stats panel** (toggle second view): total tokens, tokens_today, session count, uptime, approval/denial lifetime counters. Triggered by Up or Down on home screen.
+- [ ] **Stats panel** (toggle second view): total tokens, tokens_today, session count, uptime, approval/denial lifetime counters, owner name, wall-clock (we cache all of this already; just needs rendering). Triggered by Up or Down on home screen.
 - [ ] **BLE signal strength indicator** — read RSSI via GAP, show as a 1–4 bar icon in the corner.
 - [ ] **Power management** — dim the screen after N seconds idle, wake on next heartbeat or prompt.
 - [ ] **Persistent bond logs** — write connect/disconnect events to SD for postmortem analysis.
+- [ ] **Smarter turn-event triggers** — v0.5.12 counts turn events but doesn't render. Design a celebrate trigger gated on rate/size/token growth (not every turn, but meaningfully "big" ones).
 
 ## Protocol completeness (vs REFERENCE.md)
 
-- [ ] **`{"cmd":"unpair"}` handler** — desktop sends this when user clicks "Forget" on its side. Clear our bond and restart pairing.
-- [ ] **Time sync** — desktop sends wall-clock timestamp, device can use it for display.
-- [ ] **Owner name** — desktop publishes the paired user's name; show on idle screen.
-- [ ] **Turn event reporting** — per REFERENCE.md, desktop fires a turn-complete event with tool/token data. Animate "celebrate" state on big turns.
+- [ ] **`{"cmd":"name","name":"..."}` handler** — desktop sets device display name. Needs persistence + advertising-name regen.
+- [ ] **`{"cmd":"status"}` handler** — desktop polls this for the Hardware Buddy window's stats panel. Rich response (bat, sys, stats). Touches `furi_hal_power` + `furi_hal_version`.
 - [ ] **Folder push** — 1.8 MB transport for custom pet packs. Chunked-frame parser. Big job; only worth it when multi-pet selection UX exists.
 
 ### Deferred pending protocol additions
